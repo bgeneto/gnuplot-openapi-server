@@ -144,6 +144,22 @@ your-public-host.example {
     respond /openapi.json 404
 }
 ```
+or something like:
+
+```
+    @images-server host your-images-server.app
+
+    handle @images-server {
+        handle_path /gnuplot-outputs/* {
+            rewrite * /outputs{path}
+            reverse_proxy http://gnuplot-server:8000 {
+                import headers-proxy
+                import transport-settings
+            }
+        }
+        respond 404
+    }
+```
 
 Then a generated file such as `/tmp/gnuplot-tool-server/trig.png` is returned to the LLM as:
 
