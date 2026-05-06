@@ -46,6 +46,14 @@ DEFAULT_OUTPUT_DIR = Path(
 ).resolve()
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PUBLIC_BASE_URL_ENV = "GNUPLOT_PUBLIC_OUTPUT_BASE_URL"
+DEFAULT_IMAGE_WIDTH = 1600
+DEFAULT_IMAGE_HEIGHT = 1000
+DEFAULT_PNG_FONT = "DejaVu Sans"
+DEFAULT_PNG_FONT_SIZE = 14
+DEFAULT_PNG_TERMINAL = (
+    f'pngcairo enhanced font "{DEFAULT_PNG_FONT},{DEFAULT_PNG_FONT_SIZE}" '
+    f"size {DEFAULT_IMAGE_WIDTH},{DEFAULT_IMAGE_HEIGHT}"
+)
 
 DEFAULT_ALLOWED_ROOTS = [
     Path.cwd().resolve(),
@@ -162,7 +170,7 @@ class GnuplotSuccessResponse(BaseModel):
                 {
                     "success": True,
                     "operation": "plot_function",
-                    "terminal": 'pngcairo enhanced font "arial,10" size 960,640',
+                    "terminal": DEFAULT_PNG_TERMINAL,
                     "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
                     "output": {
                         "path": "/tmp/gnuplot-tool-server/trig.png",
@@ -282,20 +290,20 @@ class GnuplotBaseInput(BaseModel):
         validation_alias=AliasChoices("terminal", "term"),
         description=(
             "Optional gnuplot terminal string, for example "
-            "'pngcairo enhanced font \"arial,10\" size 960,640'. Leave this empty "
+            f"'{DEFAULT_PNG_TERMINAL}'. Leave this empty "
             "for normal Open WebUI usage so PNG output is selected automatically."
         ),
         max_length=500,
-        examples=['pngcairo enhanced font "arial,10" size 960,640'],
+        examples=[DEFAULT_PNG_TERMINAL],
     )
     width: int = Field(
-        960,
+        DEFAULT_IMAGE_WIDTH,
         description="Default output width used when terminal is not provided.",
         ge=100,
         le=8000,
     )
     height: int = Field(
-        640,
+        DEFAULT_IMAGE_HEIGHT,
         description="Default output height used when terminal is not provided.",
         ge=100,
         le=8000,
@@ -927,7 +935,10 @@ class GnuplotTool:
             return f"jpeg enhanced size {width},{height}"
         if suffix in {".txt", ".ascii"}:
             return f"dumb size {max(width // 10, 40)},{max(height // 20, 20)}"
-        return f'pngcairo enhanced font "arial,10" size {width},{height}'
+        return (
+            f'pngcairo enhanced font "{DEFAULT_PNG_FONT},{DEFAULT_PNG_FONT_SIZE}" '
+            f"size {width},{height}"
+        )
 
     def _quote_gnuplot_string(self, text: str) -> str:
         """Quote a string for gnuplot commands/settings."""
@@ -994,17 +1005,32 @@ class GnuplotTool:
 
     def _wait_for_output_file(
         self, output_path: Path, timeout: float = 2.0, interval: float = 0.05
-    ) -> None:
+    ) -> bool:
         """Wait briefly for gnuplot terminals to flush output files."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if output_path.exists() and output_path.is_file():
                 try:
                     if output_path.stat().st_size > 0:
-                        return
+                        return True
                 except OSError:
                     pass
             time.sleep(interval)
+        return False
+
+    def _validated_output_size(self, output_path: Path) -> int:
+        """Return output size, or raise when gnuplot did not create usable bytes."""
+        if not output_path.exists() or not output_path.is_file():
+            raise FileNotFoundError(
+                f"Gnuplot completed but output file was not found: {output_path}"
+            )
+
+        size_bytes = output_path.stat().st_size
+        if size_bytes <= 0:
+            raise RuntimeError(
+                f"Gnuplot completed but output file is empty (0 bytes): {output_path}"
+            )
+        return size_bytes
 
     def _finalize_output(
         self, g: Any, output_path: Path, expect_output: bool = True
@@ -1018,7 +1044,8 @@ class GnuplotTool:
         """
         g.cmd("unset output")
         if expect_output:
-            self._wait_for_output_file(output_path)
+            if not self._wait_for_output_file(output_path):
+                self._validated_output_size(output_path)
 
     def _data_to_text(self, data: str | DataRows) -> str:
         """Convert inline data into text suitable for gnuplot."""
@@ -1112,10 +1139,7 @@ class GnuplotTool:
         include_image_base64: bool,
     ) -> dict[str, Any]:
         """Create output metadata for a generated plot."""
-        if not output_path.exists() or not output_path.is_file():
-            raise FileNotFoundError(
-                f"Gnuplot completed but output file was not found: {output_path}"
-            )
+        size_bytes = self._validated_output_size(output_path)
 
         relative_path = output_path.relative_to(self.output_dir).as_posix()
         mime_type = (
@@ -1128,7 +1152,7 @@ class GnuplotTool:
             "filename": output_path.name,
             "url": output_url,
             "mime_type": mime_type,
-            "size_bytes": output_path.stat().st_size,
+            "size_bytes": size_bytes,
         }
 
         if include_image_base64:
@@ -1635,7 +1659,7 @@ async def gnuplot_health():
                     "example": {
                         "success": True,
                         "operation": "plot_function",
-                        "terminal": 'pngcairo enhanced font "arial,10" size 960,640',
+                        "terminal": DEFAULT_PNG_TERMINAL,
                         "output": {
                             "path": "/tmp/gnuplot-tool-server/simple.png",
                             "filename": "simple.png",

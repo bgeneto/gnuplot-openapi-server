@@ -4,7 +4,7 @@
 
 The server wraps `py-gnuplot`, writes generated files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/gnuplot-tool-server`), and serves them back from `/outputs/{filename}`.
 
-PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Omit `output` or use a `.png` filename to get the server's default `pngcairo` terminal.
+PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Omit `output` or use a `.png` filename to get the server's default high-resolution `pngcairo` terminal.
 
 ## What It Provides
 
@@ -193,8 +193,8 @@ Most plotting endpoints inherit these fields:
 | Field | Purpose |
 | --- | --- |
 | `output` | Optional output filename. Relative names are written under `GNUPLOT_OUTPUT_DIR`; omitted outputs get a unique `.png` filename. |
-| `terminal` or `term` | Optional gnuplot terminal string. If omitted, the server chooses one from the output extension. For Open WebUI, prefer the default `pngcairo` behavior. |
-| `width`, `height` | Default image size used by generated terminal settings. |
+| `terminal` or `term` | Optional gnuplot terminal string. If omitted, the server chooses one from the output extension. For Open WebUI, prefer the default high-resolution `pngcairo` behavior. |
+| `width`, `height` | Default image size used by generated terminal settings. Defaults to `1600` by `1000` for PNG output. |
 | `settings` | Mapping of gnuplot `set` options. Example: `{"grid": "", "title": "\"Demo\""}`. |
 | `unset` | List of gnuplot options to unset before plotting. |
 | `commands`, `cmd`, or `pre_commands` | Commands to run before the plot operation. |
@@ -204,6 +204,30 @@ Most plotting endpoints inherit these fields:
 | `allow_unsafe_commands` | Allows blocked shell-like gnuplot constructs. Use only for trusted input. |
 
 By default, the server blocks common shell escape forms such as backticks, leading `!`, `system(...)`, `popen(...)`, and user-supplied `load`/`call` script commands.
+
+## PNG Quality
+
+The default PNG terminal is:
+
+```text
+pngcairo enhanced font "DejaVu Sans,14" size 1600,1000
+```
+
+This intentionally renders more pixels than a typical chat pane displays, so
+browser downscaling keeps plot lines, ticks, labels, and legends smoother. The
+Docker image installs DejaVu fonts so the default font is available in
+headless containers.
+
+For even sharper output, pass larger `width` and `height` values, or provide an
+explicit `terminal` such as:
+
+```json
+{
+  "terminal": "pngcairo enhanced font \"DejaVu Sans,16\" size 2400,1500"
+}
+```
+
+Use SVG or PDF only when the caller explicitly wants a vector format.
 
 ## LLM Prompt Examples
 
@@ -361,6 +385,9 @@ Successful plotting responses include:
   }
 }
 ```
+
+If gnuplot completes but the expected output file is missing or empty, the
+server returns a `400` error instead of a URL that cannot be rendered.
 
 ## Open WebUI Integration
 

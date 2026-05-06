@@ -10,6 +10,10 @@ The implementation lives mainly in `main.py` and wraps `py-gnuplot`, which in tu
 
 Critical product constraint: keep PNG output as the default. Open WebUI's markdown editor can render returned PNG URLs directly. If the caller omits `output` and `terminal`, the server should generate a unique `.png` file using `pngcairo`.
 
+Default PNGs are intentionally high-resolution for browser markdown rendering:
+`1600x1000` with `pngcairo enhanced font "DejaVu Sans,14"`. The Docker image
+installs DejaVu fonts so this font is available in headless containers.
+
 ## Repository Files
 
 - `main.py`: FastAPI app, Pydantic request models, gnuplot wrapper, validation, static output serving, and all `/gnuplot` endpoints.
@@ -122,7 +126,7 @@ When no `output` is supplied:
 
 When `output` is supplied with a `.png` suffix and no explicit terminal:
 
-- use `pngcairo enhanced font "arial,10" size {width},{height}`.
+- use `pngcairo enhanced font "DejaVu Sans,14" size {width},{height}`.
 
 Only produce SVG, PDF, GIF, JPG, text, or other output types when the caller explicitly requests them through `output` extension or `terminal`.
 

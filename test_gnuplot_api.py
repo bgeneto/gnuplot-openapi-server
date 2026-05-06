@@ -12,6 +12,7 @@ from main import app
 
 class FakeGnuplot:
     instances: list["FakeGnuplot"] = []
+    output_bytes = b"fake gnuplot image"
 
     def __init__(self, log: bool = False):
         self.log = log
@@ -63,7 +64,7 @@ class FakeGnuplot:
 
         output_path = Path(_unquote_gnuplot_string(output))
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"fake gnuplot image")
+        output_path.write_bytes(self.output_bytes)
 
 
 def _unquote_gnuplot_string(value: str) -> str:
@@ -75,6 +76,7 @@ def _unquote_gnuplot_string(value: str) -> str:
 @pytest.fixture(autouse=True)
 def isolated_gnuplot_runtime(monkeypatch, tmp_path):
     FakeGnuplot.instances = []
+    FakeGnuplot.output_bytes = b"fake gnuplot image"
     monkeypatch.setattr(main, "DEFAULT_OUTPUT_DIR", tmp_path)
     monkeypatch.delenv("GNUPLOT_PUBLIC_OUTPUT_BASE_URL", raising=False)
     monkeypatch.setattr(
@@ -186,6 +188,27 @@ async def test_plot_function_returns_output_metadata_and_base64():
 
 
 @pytest.mark.asyncio
+async def test_plot_function_rejects_zero_byte_output(monkeypatch):
+    FakeGnuplot.output_bytes = b""
+    monkeypatch.setattr(
+        main.GnuplotTool,
+        "_wait_for_output_file",
+        lambda self, output_path: False,
+    )
+
+    response = await post_json(
+        "/gnuplot/plot_function",
+        {
+            "output": "empty.png",
+            "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "output file is empty (0 bytes)" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_public_output_base_url_overrides_private_request_url(monkeypatch):
     monkeypatch.setenv(
         "GNUPLOT_PUBLIC_OUTPUT_BASE_URL", "https://plots.example.test/plot-outputs/"
@@ -223,6 +246,8 @@ async def test_plot_function_defaults_to_png_for_open_webui_markdown():
     assert body["output"]["url"].endswith(".png")
     assert body["output"]["mime_type"] == "image/png"
     assert body["terminal"].startswith("pngcairo")
+    assert 'font "DejaVu Sans,14"' in body["terminal"]
+    assert "size 1600,1000" in body["terminal"]
 
 
 @pytest.mark.asyncio
