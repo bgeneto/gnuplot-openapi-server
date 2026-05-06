@@ -188,7 +188,7 @@ async def test_plot_function_returns_output_metadata_and_base64():
 @pytest.mark.asyncio
 async def test_public_output_base_url_overrides_private_request_url(monkeypatch):
     monkeypatch.setenv(
-        "GNUPLOT_PUBLIC_OUTPUT_BASE_URL", "https://plots.example.test/gnuplot-outputs/"
+        "GNUPLOT_PUBLIC_OUTPUT_BASE_URL", "https://plots.example.test/plot-outputs/"
     )
 
     response = await post_json(
@@ -203,7 +203,7 @@ async def test_public_output_base_url_overrides_private_request_url(monkeypatch)
     body = response.json()
     assert (
         body["output"]["url"]
-        == "https://plots.example.test/gnuplot-outputs/nested/unit%20plot.png"
+        == "https://plots.example.test/plot-outputs/nested/unit%20plot.png"
     )
     assert body["result"]["output_url"] == body["output"]["url"]
 

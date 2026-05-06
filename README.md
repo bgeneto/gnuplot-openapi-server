@@ -92,7 +92,7 @@ http://localhost:8000/outputs
 Run with the Open WebUI Docker network setup:
 
 ```bash
-GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs \
+GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/plot-outputs \
 docker compose -f compose.prod.yaml up --build -d
 ```
 
@@ -126,14 +126,14 @@ That URL is not usually reachable from the user's browser. To render generated P
 
 ```yaml
 environment:
-  - GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs
+  - GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/plot-outputs
 ```
 
 With Caddy on the same Docker network as `gnuplot-server`, expose only generated files like this:
 
 ```caddyfile
 your-public-host.example {
-    handle_path /gnuplot-outputs/* {
+    handle_path /plot-outputs/* {
         rewrite * /outputs{path}
         reverse_proxy http://gnuplot-server:8000
     }
@@ -148,10 +148,10 @@ your-public-host.example {
 Then a generated file such as `/tmp/gnuplot-tool-server/trig.png` is returned to the LLM as:
 
 ```text
-https://your-public-host.example/gnuplot-outputs/trig.png
+https://your-public-host.example/plot-outputs/trig.png
 ```
 
-Only `/gnuplot-outputs/*` needs to be public. The plotting API can remain private on the Docker network.
+Only `/plot-outputs/*` needs to be public. The plotting API can remain private on the Docker network.
 
 ## OpenAPI Surface
 

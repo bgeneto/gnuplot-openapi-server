@@ -59,7 +59,7 @@ Supported environment variables:
 
 - `GNUPLOT_OUTPUT_DIR`: directory for generated plots, inline data files, and inline script files. Defaults to `/tmp/gnuplot-tool-server`.
 - `GNUPLOT_ALLOWED_ROOTS`: extra input-file roots separated by the OS path separator. On Linux this is `:`.
-- `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`: optional browser-facing static URL prefix for generated output files. Use this when Open WebUI calls the API through `http://gnuplot-server:8000` but the browser needs a public URL such as `https://host/gnuplot-outputs/file.png`.
+- `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`: optional browser-facing static URL prefix for generated output files. Use this when Open WebUI calls the API through `http://gnuplot-server:8000` but the browser needs a public URL such as `https://host/plot-outputs/file.png`.
 
 Input file reads are allowed only under:
 
@@ -217,7 +217,7 @@ docker compose -f compose.dev.yaml up --build -d
 Open WebUI network deployment:
 
 ```bash
-GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs \
+GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/plot-outputs \
 docker compose -f compose.prod.yaml up --build -d
 ```
 
@@ -244,14 +244,14 @@ For browser-rendered markdown, prefer a public static prefix and expose only the
 
 ```caddyfile
 your-public-host.example {
-    handle_path /gnuplot-outputs/* {
+    handle_path /plot-outputs/* {
         rewrite * /outputs{path}
         reverse_proxy http://gnuplot-server:8000
     }
 }
 ```
 
-Set `GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs` on the gnuplot service so response URLs point at that route.
+Set `GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/plot-outputs` on the gnuplot service so response URLs point at that route.
 
 ## Documentation Expectations
 
