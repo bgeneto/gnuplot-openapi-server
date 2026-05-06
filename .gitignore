@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# VSCode settings
+.vscode/
+
+# PyTest
+.pytest_cache/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# MyPy cache
+.mypy_cache/
+
+# Pip wheel metadata
+pip-wheel-metadata/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+
+# JetBrains IDE
+.idea/
