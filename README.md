@@ -140,6 +140,77 @@ Most plotting endpoints inherit these fields:
 
 By default, the server blocks common shell escape forms such as backticks, leading `!`, `system(...)`, `popen(...)`, and user-supplied `load`/`call` script commands.
 
+## LLM Prompt Examples
+
+These are examples of real prompts a user can ask an LLM after this OpenAPI tool server is enabled in Open WebUI. The LLM should call the appropriate `/gnuplot` endpoint and return the generated PNG URL as markdown.
+
+Function comparison:
+
+```text
+Plot sin(x), cos(x), and sin(x)/x from -20 to 20 on the same chart. Use a PNG output, add a grid, put the legend in the top right, and label the axes.
+```
+
+Polynomial and roots:
+
+```text
+Plot f(x) = x^3 - 6x^2 + 11x - 6 from x = -1 to 5. Highlight the x-axis and make the title "Cubic With Three Real Roots". Return the generated image in markdown.
+```
+
+Generated data:
+
+```text
+Create a small data table for monthly revenue: Jan 12000, Feb 13500, Mar 12800, Apr 16000, May 17250, Jun 18100. Plot it as a PNG line chart with points, readable labels, and a title.
+```
+
+Scatter plot with trend:
+
+```text
+Here are measurements: (1, 2.1), (2, 2.9), (3, 3.7), (4, 4.2), (5, 5.1), (6, 5.8). Plot them as points and overlay a simple fitted line so I can see the trend.
+```
+
+CSV-style inline data:
+
+```text
+Plot this CSV data as a PNG using column 1 as time and column 2 as temperature. Add a grid and label the y-axis "Temperature C":
+time,temp
+0,22.1
+1,22.8
+2,24.0
+3,25.4
+4,24.9
+5,23.7
+```
+
+Existing data file:
+
+```text
+Use the gnuplot tool to plot the file data/benchmark.dat. Use column 1 for input size and column 2 for runtime. Make it a PNG line chart with points, title it "Benchmark Runtime", and return the plot URL.
+```
+
+3D surface:
+
+```text
+Create a 3D PNG surface plot of z = sin(sqrt(x*x + y*y)) / sqrt(x*x + y*y) for x and y from -10 to 10. Use pm3d, hidden3d, and a readable camera angle.
+```
+
+Heat-map style surface:
+
+```text
+Plot z = exp(-(x*x + y*y) / 10) as a colored 3D surface and also make it easy to see the peak near the origin. Return the generated PNG image as markdown.
+```
+
+Multi-panel comparison:
+
+```text
+Create a two-panel PNG figure. The top panel should show sin(x) and cos(x). The bottom panel should show tan(x) clipped to y from -5 to 5. Use the same x range, -pi to pi, and add grid lines.
+```
+
+Engineering-style step response:
+
+```text
+Plot y = 1 - exp(-t/2) from t = 0 to 12 as a control-system step response. Use a PNG output, title it "First-Order Step Response", label the axes, and show the final value line at y = 1.
+```
+
 ## Examples
 
 Create a 2D function plot:
