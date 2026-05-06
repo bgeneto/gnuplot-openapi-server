@@ -59,6 +59,7 @@ Supported environment variables:
 
 - `GNUPLOT_OUTPUT_DIR`: directory for generated plots, inline data files, and inline script files. Defaults to `/tmp/gnuplot-tool-server`.
 - `GNUPLOT_ALLOWED_ROOTS`: extra input-file roots separated by the OS path separator. On Linux this is `:`.
+- `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`: optional browser-facing static URL prefix for generated output files. Use this when Open WebUI calls the API through `http://gnuplot-server:8000` but the browser needs a public URL such as `https://host/gnuplot-outputs/file.png`.
 
 Input file reads are allowed only under:
 
@@ -211,11 +212,16 @@ Local host access:
 docker compose -f compose.dev.yaml up --build -d
 ```
 
+`compose.dev.yaml` defaults `GNUPLOT_PUBLIC_OUTPUT_BASE_URL` to `http://localhost:8000/outputs` because it publishes port 8000 on the host.
+
 Open WebUI network deployment:
 
 ```bash
+GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs \
 docker compose -f compose.prod.yaml up --build -d
 ```
+
+`compose.prod.yaml` intentionally requires `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`, because Open WebUI calls the tool through the private Docker hostname while the browser needs a public static image URL.
 
 Builds may need network access for `apt-get` and `pip`. If running in a sandboxed agent environment, request escalation rather than trying to work around network restrictions.
 
@@ -233,6 +239,19 @@ The plot response should include a `.png` `output.url` that can be embedded in O
 ```markdown
 ![Generated plot](http://gnuplot-server:8000/outputs/example.png)
 ```
+
+For browser-rendered markdown, prefer a public static prefix and expose only the output folder. Example Caddy route:
+
+```caddyfile
+your-public-host.example {
+    handle_path /gnuplot-outputs/* {
+        rewrite * /outputs{path}
+        reverse_proxy http://gnuplot-server:8000
+    }
+}
+```
+
+Set `GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs` on the gnuplot service so response URLs point at that route.
 
 ## Documentation Expectations
 

@@ -83,11 +83,20 @@ Run with Docker Compose for local host access:
 docker compose -f compose.dev.yaml up --build -d
 ```
 
+The dev compose file defaults generated image URLs to:
+
+```text
+http://localhost:8000/outputs
+```
+
 Run with the Open WebUI Docker network setup:
 
 ```bash
+GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs \
 docker compose -f compose.prod.yaml up --build -d
 ```
+
+The prod compose file requires `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`, because the browser cannot render Docker-internal URLs such as `http://gnuplot-server:8000/outputs/...`.
 
 The included Docker setup runs the FastAPI app as:
 
@@ -101,8 +110,48 @@ uvicorn main:app --host=0.0.0.0 --port=8000
 | --- | --- | --- |
 | `GNUPLOT_OUTPUT_DIR` | `/tmp/gnuplot-tool-server` | Directory where generated outputs and temporary inline data/scripts are written. |
 | `GNUPLOT_ALLOWED_ROOTS` | empty | Additional input-file roots, separated with the OS path separator (`:` on Linux). Existing data/script files must be under the current working directory, the output directory, or one of these extra roots. |
+| `GNUPLOT_PUBLIC_OUTPUT_BASE_URL` | empty | Optional browser-facing base URL for generated images. When set, `output.url` uses this value instead of the private Docker-network URL. |
 
 Relative `output` paths are always resolved under `GNUPLOT_OUTPUT_DIR`. Output paths outside that directory are rejected.
+
+## Public Output URLs
+
+Open WebUI calls this tool server from the backend using the private Docker-network URL, for example:
+
+```text
+http://gnuplot-server:8000
+```
+
+That URL is not usually reachable from the user's browser. To render generated PNGs in Open WebUI markdown, expose only the static output path through your reverse proxy and set:
+
+```yaml
+environment:
+  - GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/gnuplot-outputs
+```
+
+With Caddy on the same Docker network as `gnuplot-server`, expose only generated files like this:
+
+```caddyfile
+your-public-host.example {
+    handle_path /gnuplot-outputs/* {
+        rewrite * /outputs{path}
+        reverse_proxy http://gnuplot-server:8000
+    }
+
+    # Keep the tool API private. Add your normal Open WebUI routes elsewhere.
+    respond /gnuplot/* 404
+    respond /docs 404
+    respond /openapi.json 404
+}
+```
+
+Then a generated file such as `/tmp/gnuplot-tool-server/trig.png` is returned to the LLM as:
+
+```text
+https://your-public-host.example/gnuplot-outputs/trig.png
+```
+
+Only `/gnuplot-outputs/*` needs to be public. The plotting API can remain private on the Docker network.
 
 ## OpenAPI Surface
 

@@ -18,6 +18,7 @@ class FakeGnuplot:
         self.settings = {}
         self.commands: list[str] = []
         self.operations: list[tuple[str, tuple, dict]] = []
+        self.output_dirty = False
         FakeGnuplot.instances.append(self)
 
     def set(self, **settings):
@@ -28,26 +29,34 @@ class FakeGnuplot:
 
     def cmd(self, *commands):
         self.commands.extend(commands)
-        if any("plot" in command or command.startswith("load ") for command in commands):
+        if any(command == "unset output" for command in commands):
             self._write_output()
+            self.output_dirty = False
+            return
+
+        if any("plot" in command or command.startswith("load ") for command in commands):
+            self.output_dirty = True
 
     def plot(self, *items, **settings):
         self.operations.append(("plot", items, settings))
-        self._write_output()
+        self.output_dirty = True
 
     def splot(self, *items, **settings):
         self.operations.append(("splot", items, settings))
-        self._write_output()
+        self.output_dirty = True
 
     def plot_data(self, data, *items, **settings):
         self.operations.append(("plot_data", (data, *items), settings))
-        self._write_output()
+        self.output_dirty = True
 
     def splot_data(self, data, *items, **settings):
         self.operations.append(("splot_data", (data, *items), settings))
-        self._write_output()
+        self.output_dirty = True
 
     def _write_output(self):
+        if not self.output_dirty:
+            return
+
         output = self.settings.get("output")
         if not output:
             return
@@ -67,6 +76,7 @@ def _unquote_gnuplot_string(value: str) -> str:
 def isolated_gnuplot_runtime(monkeypatch, tmp_path):
     FakeGnuplot.instances = []
     monkeypatch.setattr(main, "DEFAULT_OUTPUT_DIR", tmp_path)
+    monkeypatch.delenv("GNUPLOT_PUBLIC_OUTPUT_BASE_URL", raising=False)
     monkeypatch.setattr(
         main,
         "DEFAULT_ALLOWED_ROOTS",
@@ -101,7 +111,10 @@ async def test_health_and_openapi_schema_expose_gnuplot_tools():
     assert "gnuplot_executable" in health
 
     assert schema_response.status_code == 200
-    paths = schema_response.json()["paths"]
+    schema = schema_response.json()
+    assert "default pngcairo terminal" in schema["info"]["description"]
+
+    paths = schema["paths"]
     assert "/gnuplot/health" in paths
     for path in (
         "/gnuplot/plot_function",
@@ -115,6 +128,37 @@ async def test_health_and_openapi_schema_expose_gnuplot_tools():
         "/gnuplot/run_commands",
     ):
         assert path in paths
+
+    assert (
+        paths["/gnuplot/plot_function"]["post"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+        == "#/components/schemas/GnuplotSuccessResponse"
+    )
+    assert (
+        paths["/gnuplot/health"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+        == "#/components/schemas/GnuplotHealthResponse"
+    )
+    assert "Use this endpoint" in paths["/gnuplot/plot_file"]["post"]["description"]
+
+    components = schema["components"]["schemas"]
+    assert "OutputInfo" in components
+    assert "OperationResult" in components
+    assert "GnuplotSuccessResponse" in components
+    assert (
+        "Open WebUI markdown"
+        in components["PlotFunctionInput"]["properties"]["output"]["description"]
+    )
+    assert (
+        "shell escapes"
+        in components["PlotFunctionInput"]["properties"]["commands"]["description"]
+    )
+    assert (
+        "GNUPLOT_PUBLIC_OUTPUT_BASE_URL"
+        in components["PlotFunctionInput"]["description"]
+    )
 
 
 @pytest.mark.asyncio
@@ -138,6 +182,30 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert body["output"]["data_uri"].startswith("data:image/png;base64,")
     assert Path(body["output"]["path"]).exists()
     assert FakeGnuplot.instances[-1].operations[-1][0] == "plot"
+    assert FakeGnuplot.instances[-1].commands[-1] == "unset output"
+
+
+@pytest.mark.asyncio
+async def test_public_output_base_url_overrides_private_request_url(monkeypatch):
+    monkeypatch.setenv(
+        "GNUPLOT_PUBLIC_OUTPUT_BASE_URL", "https://plots.example.test/gnuplot-outputs/"
+    )
+
+    response = await post_json(
+        "/gnuplot/plot_function",
+        {
+            "output": "nested/unit plot.png",
+            "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (
+        body["output"]["url"]
+        == "https://plots.example.test/gnuplot-outputs/nested/unit%20plot.png"
+    )
+    assert body["result"]["output_url"] == body["output"]["url"]
 
 
 @pytest.mark.asyncio

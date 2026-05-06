@@ -27,6 +27,7 @@ import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +45,7 @@ DEFAULT_OUTPUT_DIR = Path(
     os.getenv("GNUPLOT_OUTPUT_DIR", "/tmp/gnuplot-tool-server")
 ).resolve()
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_PUBLIC_BASE_URL_ENV = "GNUPLOT_PUBLIC_OUTPUT_BASE_URL"
 
 DEFAULT_ALLOWED_ROOTS = [
     Path.cwd().resolve(),
@@ -51,12 +53,16 @@ DEFAULT_ALLOWED_ROOTS = [
 ]
 
 app = FastAPI(
-    title="Gnuplot Tool Server",
+    title="Gnuplot",
     version="1.0.0",
     description=(
-        "Provides gnuplot plotting operations like plot function, plot file, "
-        "splot function, splot file, multiplot, generated-data plotting, and "
-        ".gnu script execution through py-gnuplot."
+        "OpenAPI tool server for creating gnuplot charts. Use /gnuplot/plot_function "
+        "for 2D formulas, /gnuplot/plot_file for existing files or inline table data, "
+        "/gnuplot/splot_function and /gnuplot/splot_file for 3D plots, /gnuplot/multiplot "
+        "for multi-panel figures, and /gnuplot/run_script or /gnuplot/run_commands only "
+        "when the user asks for script/command-level control. For Open WebUI markdown, "
+        "prefer PNG output: omit output or use a .png filename so the server chooses "
+        "the default pngcairo terminal and returns an image/png URL under /outputs."
     ),
 )
 
@@ -78,6 +84,155 @@ DataRows = list[list[DataCell]]
 CommandInput = str | list[str]
 
 
+class OutputInfo(BaseModel):
+    """Metadata for a generated plot file served from `/outputs`."""
+
+    path: str = Field(
+        ...,
+        description="Absolute server-side path to the generated output file.",
+        examples=["/tmp/gnuplot-tool-server/trig.png"],
+    )
+    filename: str = Field(
+        ...,
+        description="Output filename. It ends with .png by default for Open WebUI.",
+        examples=["trig.png"],
+    )
+    url: str = Field(
+        ...,
+        description=(
+            "HTTP URL for the generated file. Return this URL to the user, usually "
+            "as markdown image syntax for PNG outputs."
+        ),
+        examples=["http://localhost:8000/outputs/trig.png"],
+    )
+    mime_type: str = Field(
+        ...,
+        description="MIME type inferred from the output filename.",
+        examples=["image/png"],
+    )
+    size_bytes: int = Field(
+        ...,
+        description="Size of the generated output file in bytes.",
+        examples=[12345],
+    )
+    base64: Optional[str] = Field(
+        None,
+        description="Base64-encoded output bytes when include_image_base64 is true.",
+    )
+    data_uri: Optional[str] = Field(
+        None,
+        description="Data URI when include_image_base64 is true.",
+    )
+
+
+class OperationResult(BaseModel):
+    """LLM-friendly summary of the generated plot location."""
+
+    text_output: str = Field(
+        ...,
+        description="Short natural-language status message for tool callers.",
+        examples=[
+            "Created plot_function output at http://localhost:8000/outputs/trig.png"
+        ],
+    )
+    output_path: str = Field(
+        ...,
+        description="Absolute server-side output path.",
+        examples=["/tmp/gnuplot-tool-server/trig.png"],
+    )
+    output_url: Optional[str] = Field(
+        None,
+        description="HTTP URL to the generated output, or null when no output was expected.",
+        examples=["http://localhost:8000/outputs/trig.png"],
+    )
+
+
+class GnuplotSuccessResponse(BaseModel):
+    """
+    Common success response for plotting endpoints.
+
+    Endpoint-specific metadata such as `items`, `commands`, `data_file`,
+    `script_path`, `panels`, and `terminal` is included as extra fields.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "examples": [
+                {
+                    "success": True,
+                    "operation": "plot_function",
+                    "terminal": 'pngcairo enhanced font "arial,10" size 960,640',
+                    "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+                    "output": {
+                        "path": "/tmp/gnuplot-tool-server/trig.png",
+                        "filename": "trig.png",
+                        "url": "http://localhost:8000/outputs/trig.png",
+                        "mime_type": "image/png",
+                        "size_bytes": 12345,
+                    },
+                    "result": {
+                        "text_output": (
+                            "Created plot_function output at "
+                            "http://localhost:8000/outputs/trig.png"
+                        ),
+                        "output_path": "/tmp/gnuplot-tool-server/trig.png",
+                        "output_url": "http://localhost:8000/outputs/trig.png",
+                    },
+                }
+            ]
+        },
+    )
+
+    success: bool = Field(True, description="True when gnuplot rendered successfully.")
+    operation: str = Field(
+        ...,
+        description="Operation name, for example plot_function, plot_file, or multiplot.",
+    )
+    output: Optional[OutputInfo] = Field(
+        ...,
+        description=(
+            "Generated file metadata. This can be null only for run_commands when "
+            "expect_output=false and no file was created."
+        ),
+    )
+    result: OperationResult = Field(
+        ...,
+        description="Convenient text and URL fields for LLM-facing responses.",
+    )
+
+
+class GnuplotHealthResponse(BaseModel):
+    """Health response for `/gnuplot/health`."""
+
+    success: bool = Field(True, description="True when the server is reachable.")
+    service: str = Field("gnuplot-tool-server", description="Service identifier.")
+    version: str = Field(..., description="FastAPI app version.")
+    output_dir: str = Field(
+        ..., description="Directory where generated files are written."
+    )
+    pygnuplot_available: bool = Field(
+        ..., description="Whether the pygnuplot Python package can be imported."
+    )
+    gnuplot_executable: Optional[str] = Field(
+        None,
+        description="Path to the native gnuplot executable, or null if not found.",
+    )
+
+
+class HttpErrorResponse(BaseModel):
+    """Error response produced by FastAPI HTTPException for rejected tool input."""
+
+    detail: str = Field(..., description="Human-readable error detail.")
+
+
+class InternalErrorResponse(BaseModel):
+    """Global unhandled-error response."""
+
+    success: bool = Field(False, description="False for internal errors.")
+    error: str = Field(..., description="Human-readable error message.")
+
+
 class GnuplotBaseInput(BaseModel):
     """
     Base request model for gnuplot operations.
@@ -97,24 +252,41 @@ class GnuplotBaseInput(BaseModel):
         allow_unsafe_commands: Disable command safety checks for trusted callers.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "description": (
+                "Common plotting options. For Open WebUI markdown, omit output or use "
+                "a .png filename so the server returns an image/png URL. Relative "
+                "outputs are written under GNUPLOT_OUTPUT_DIR. Commands are checked "
+                "for shell-like unsafe gnuplot constructs unless allow_unsafe_commands "
+                "is true. If GNUPLOT_PUBLIC_OUTPUT_BASE_URL is configured, response "
+                "URLs use that public static prefix instead of the private tool URL."
+            )
+        },
+    )
 
     output: Optional[str] = Field(
         None,
         description=(
             "Optional output filename/path. Relative paths are written under "
-            f"{DEFAULT_OUTPUT_DIR}. If omitted, a unique PNG file is created."
+            f"{DEFAULT_OUTPUT_DIR}. If omitted, a unique .png file is created and "
+            "the default pngcairo terminal is used. For Open WebUI markdown, omit "
+            "this field or choose a .png filename."
         ),
         max_length=500,
+        examples=["plot.png", "reports/plot.png"],
     )
     terminal: Optional[str] = Field(
         None,
         validation_alias=AliasChoices("terminal", "term"),
         description=(
             "Optional gnuplot terminal string, for example "
-            "'pngcairo enhanced font \"arial,10\" size 960,640'."
+            "'pngcairo enhanced font \"arial,10\" size 960,640'. Leave this empty "
+            "for normal Open WebUI usage so PNG output is selected automatically."
         ),
         max_length=500,
+        examples=['pngcairo enhanced font "arial,10" size 960,640'],
     )
     width: int = Field(
         960,
@@ -132,8 +304,10 @@ class GnuplotBaseInput(BaseModel):
         None,
         description=(
             "Optional gnuplot set options. Example: "
-            "{'title': '\"Simple Plots\"', 'xrange': '[-10:10]', 'grid': ''}."
+            "{'title': '\"Simple Plots\"', 'xrange': '[-10:10]', 'grid': ''}. "
+            "Use quoted strings inside values when gnuplot expects a string."
         ),
+        examples=[{"title": '"Simple Plots"', "xrange": "[-10:10]", "grid": ""}],
     )
     unset: Optional[list[str]] = Field(
         None,
@@ -143,7 +317,12 @@ class GnuplotBaseInput(BaseModel):
     commands: Optional[CommandInput] = Field(
         None,
         validation_alias=AliasChoices("commands", "cmd", "pre_commands"),
-        description="Optional gnuplot commands to execute before plotting.",
+        description=(
+            "Optional gnuplot commands to execute before plotting. Blocked by "
+            "default if they contain shell escapes such as !, backticks, system, "
+            "popen, load, or call."
+        ),
+        examples=[["set xzeroaxis", "set yzeroaxis"]],
     )
     post_commands: Optional[CommandInput] = Field(
         None,
@@ -158,7 +337,10 @@ class GnuplotBaseInput(BaseModel):
     )
     include_image_base64: bool = Field(
         False,
-        description="Include base64 image data and a data URI in the response.",
+        description=(
+            "Include base64 image data and a data URI in the response. Usually false "
+            "for Open WebUI because output.url is enough for markdown rendering."
+        ),
     )
     allow_unsafe_commands: bool = Field(
         False,
@@ -220,11 +402,14 @@ class PlotItemsInput(GnuplotBaseInput):
         ...,
         validation_alias=AliasChoices("items", "functions", "plots"),
         description=(
-            "Plot clauses passed to gnuplot. Example: "
+            "Full gnuplot plot clauses for formulas or expressions. Use this for "
+            "direct mathematical functions such as sin(x), cos(x), exp(-x*x), or "
+            "3D expressions in x and y. Example: "
             "['[-10:10] sin(x) title \"sin(x)\" with lines']."
         ),
         min_length=1,
         max_length=50,
+        examples=[['[-10:10] sin(x) title "sin(x)" with lines']],
     )
 
     @field_validator("items")
@@ -258,15 +443,21 @@ class FilePlotInput(GnuplotBaseInput):
     file_path: Optional[str] = Field(
         None,
         validation_alias=AliasChoices("file_path", "file", "path"),
-        description="Path to an existing data file to plot.",
+        description=(
+            "Path to an existing data file to plot. The path must be under the "
+            "current working directory, GNUPLOT_OUTPUT_DIR, or GNUPLOT_ALLOWED_ROOTS."
+        ),
         max_length=500,
+        examples=["data/benchmark.dat"],
     )
     data: Optional[str | DataRows] = Field(
         None,
         description=(
             "Inline data to write to a temporary data file. Accepts raw text or "
-            "a list of rows."
+            "a list of rows. Use this when the user pasted data or the LLM generated "
+            "a small table that should be plotted with ordinary file-based gnuplot syntax."
         ),
+        examples=[[[0, 0], [1, 1], [2, 4], [3, 9]]],
     )
     data_filename: Optional[str] = Field(
         None,
@@ -278,10 +469,12 @@ class FilePlotInput(GnuplotBaseInput):
         validation_alias=AliasChoices("items", "plots"),
         description=(
             "Optional full plot clauses. Use {file} as a placeholder for the "
-            "safe data path."
+            "safe data path. If omitted, the server builds one clause from using, "
+            "title, and style."
         ),
         min_length=1,
         max_length=50,
+        examples=[['{file} using 1:2 title "series" with linespoints']],
     )
     using: Optional[str] = Field(
         None,
@@ -301,12 +494,15 @@ class FilePlotInput(GnuplotBaseInput):
     separator: Optional[str] = Field(
         None,
         description=(
-            "Optional datafile separator, for example ',' for CSV or whitespace for default."
+            "Optional datafile separator. Use ',' for CSV data; omit for whitespace-separated data."
         ),
         max_length=20,
+        examples=[","],
     )
 
-    @field_validator("file_path", "data_filename", "using", "style", "title", "separator")
+    @field_validator(
+        "file_path", "data_filename", "using", "style", "title", "separator"
+    )
     @classmethod
     def validate_file_optional_text(cls, value):
         if value is not None and not value.strip():
@@ -344,7 +540,12 @@ class DataPlotInput(GnuplotBaseInput):
 
     data: str | DataRows = Field(
         ...,
-        description="Raw data text or a list of rows to pass to plot_data/splot_data.",
+        description=(
+            "Raw data text or a list of rows to pass directly to py-gnuplot "
+            "plot_data/splot_data. Use this for generated inline data when no reusable "
+            "data file is needed."
+        ),
+        examples=[[[0, 0], [1, 1], [2, 4], [3, 9]]],
     )
     items: list[str] = Field(
         ...,
@@ -355,6 +556,7 @@ class DataPlotInput(GnuplotBaseInput):
         ),
         min_length=1,
         max_length=50,
+        examples=[['using 1:2 title "series" with linespoints']],
     )
     separator: Optional[str] = Field(
         None,
@@ -383,9 +585,10 @@ class MultiplotPanel(BaseModel):
     )
     items: list[str] = Field(
         ...,
-        description="Plot/splot clauses for this panel.",
+        description="Plot/splot clauses for this panel. Each panel uses ordinary gnuplot syntax.",
         min_length=1,
         max_length=50,
+        examples=[['[-10:10] sin(x) title "sin(x)" with lines']],
     )
     settings: Optional[dict[str, GnuplotOptionValue]] = Field(
         None, description="Panel-specific gnuplot set options."
@@ -430,9 +633,11 @@ class MultiplotInput(GnuplotBaseInput):
         None,
         description=(
             "Optional layout clause after `set multiplot layout`, for example "
-            "'2,1 title \"Two Panels\"'. If omitted, plain `set multiplot` is used."
+            "'2,1 title \"Two Panels\"'. Use this when the user asks for multiple "
+            "panels in one PNG. If omitted, plain `set multiplot` is used."
         ),
         max_length=500,
+        examples=['2,1 title "Two Panels"'],
     )
     panels: list[MultiplotPanel] = Field(
         ...,
@@ -456,14 +661,24 @@ class ScriptInput(GnuplotBaseInput):
 
     script_path: Optional[str] = Field(
         None,
-        validation_alias=AliasChoices("script_path", "script_file", "file_path", "file"),
-        description="Path to a .gnu/.gp gnuplot script file.",
+        validation_alias=AliasChoices(
+            "script_path", "script_file", "file_path", "file"
+        ),
+        description=(
+            "Path to a .gnu/.gp/.plt/.gplot script file under an allowed input root. "
+            "Use script_path only when the user refers to an existing script file."
+        ),
         max_length=500,
+        examples=["scripts/example.gnu"],
     )
     script: Optional[str] = Field(
         None,
-        description="Inline gnuplot script text. It will be written to a .gnu file first.",
+        description=(
+            "Inline gnuplot script text. It will be written to a temporary .gnu file "
+            "under GNUPLOT_OUTPUT_DIR first. Use for trusted script-style plotting."
+        ),
         max_length=20000,
+        examples=['set grid\nplot [-10:10] sin(x) title "sin(x)" with lines'],
     )
     apply_output_settings: bool = Field(
         True,
@@ -489,7 +704,11 @@ class CommandRunInput(GnuplotBaseInput):
     commands: CommandInput = Field(
         ...,
         validation_alias=AliasChoices("commands", "cmd"),
-        description="Raw gnuplot command(s) to execute.",
+        description=(
+            "Raw gnuplot command(s) to execute after output/terminal settings are applied. "
+            "Use only when higher-level endpoints are not expressive enough."
+        ),
+        examples=[["set grid", 'plot [-10:10] sin(x) title "sin(x)" with lines']],
     )
     expect_output: bool = Field(
         True,
@@ -650,11 +869,15 @@ class GnuplotTool:
             )
         return resolved
 
-    def _resolve_output_file(self, output: Optional[str], default_suffix: str = ".png") -> Path:
+    def _resolve_output_file(
+        self, output: Optional[str], default_suffix: str = ".png"
+    ) -> Path:
         """Resolve and validate an output file path."""
         if output:
             raw_path = Path(output).expanduser()
-            candidate = raw_path if raw_path.is_absolute() else self.output_dir / raw_path
+            candidate = (
+                raw_path if raw_path.is_absolute() else self.output_dir / raw_path
+            )
             if not candidate.suffix:
                 candidate = candidate.with_suffix(default_suffix)
         else:
@@ -769,6 +992,34 @@ class GnuplotTool:
 
         return validated_commands
 
+    def _wait_for_output_file(
+        self, output_path: Path, timeout: float = 2.0, interval: float = 0.05
+    ) -> None:
+        """Wait briefly for gnuplot terminals to flush output files."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if output_path.exists() and output_path.is_file():
+                try:
+                    if output_path.stat().st_size > 0:
+                        return
+                except OSError:
+                    pass
+            time.sleep(interval)
+
+    def _finalize_output(
+        self, g: Any, output_path: Path, expect_output: bool = True
+    ) -> None:
+        """
+        Close gnuplot's current output target and wait for the file to appear.
+
+        Terminals such as pngcairo may not fully write the file until `unset
+        output` closes the target. Without this, the server can check too early
+        and report a missing PNG even though gnuplot creates it moments later.
+        """
+        g.cmd("unset output")
+        if expect_output:
+            self._wait_for_output_file(output_path)
+
     def _data_to_text(self, data: str | DataRows) -> str:
         """Convert inline data into text suitable for gnuplot."""
         if isinstance(data, str):
@@ -800,7 +1051,9 @@ class GnuplotTool:
         else:
             name = f"gnuplot-data-{uuid.uuid4().hex}.dat"
 
-        target = self._ensure_allowed_path(self.output_dir / name, [self.output_dir], "Data")
+        target = self._ensure_allowed_path(
+            self.output_dir / name, [self.output_dir], "Data"
+        )
         target.write_text(self._data_to_text(data), encoding="utf-8")
         return target
 
@@ -844,6 +1097,14 @@ class GnuplotTool:
 
         return self._validate_items([" ".join(parts)], allow_unsafe)
 
+    def _output_url(self, request: Request, relative_path: str) -> str:
+        """Return the browser-facing URL for a generated output file."""
+        public_base_url = os.getenv(OUTPUT_PUBLIC_BASE_URL_ENV, "").strip()
+        if public_base_url:
+            encoded_path = quote(relative_path, safe="/")
+            return f"{public_base_url.rstrip('/')}/{encoded_path}"
+        return str(request.url_for("outputs", path=relative_path))
+
     def _format_output_response(
         self,
         output_path: Path,
@@ -857,8 +1118,10 @@ class GnuplotTool:
             )
 
         relative_path = output_path.relative_to(self.output_dir).as_posix()
-        mime_type = mimetypes.guess_type(output_path.name)[0] or "application/octet-stream"
-        output_url = str(request.url_for("outputs", path=relative_path))
+        mime_type = (
+            mimetypes.guess_type(output_path.name)[0] or "application/octet-stream"
+        )
+        output_url = self._output_url(request, relative_path)
 
         output_info: dict[str, Any] = {
             "path": str(output_path),
@@ -899,7 +1162,9 @@ class GnuplotTool:
             },
         }
 
-    def _handle_error(self, operation: str, expression: Optional[str], exc: Exception) -> dict[str, Any]:
+    def _handle_error(
+        self, operation: str, expression: Optional[str], exc: Exception
+    ) -> dict[str, Any]:
         """Convert exceptions into consistent result dictionaries."""
         if isinstance(exc, TimeoutError):
             return {"success": False, "error": str(exc), "error_type": "timeout"}
@@ -963,6 +1228,7 @@ class GnuplotTool:
                 getattr(g, plot_kind)(*items)
                 if post_commands:
                     g.cmd(*post_commands)
+                self._finalize_output(g, output_path)
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
@@ -1031,6 +1297,7 @@ class GnuplotTool:
                 getattr(g, plot_kind)(*items)
                 if post_commands:
                     g.cmd(*post_commands)
+                self._finalize_output(g, output_path)
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
@@ -1085,6 +1352,7 @@ class GnuplotTool:
                 getattr(g, plot_kind)(data_text, *items)
                 if post_commands:
                     g.cmd(*post_commands)
+                self._finalize_output(g, output_path)
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
@@ -1162,6 +1430,7 @@ class GnuplotTool:
 
                 if post_commands:
                     g.cmd(*post_commands)
+                self._finalize_output(g, output_path)
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
@@ -1222,6 +1491,7 @@ class GnuplotTool:
                 g.cmd(load_command)
                 if post_commands:
                     g.cmd(*post_commands)
+                self._finalize_output(g, output_path)
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
@@ -1268,6 +1538,7 @@ class GnuplotTool:
                 g.cmd(*commands)
                 if post_commands:
                     g.cmd(*post_commands)
+                self._finalize_output(g, output_path, expect_output=data.expect_output)
                 return setup_commands
 
             setup_commands = self._safe_computation(run, timeout=data.timeout)
@@ -1308,10 +1579,26 @@ class GnuplotTool:
 # Create gnuplot router
 gnuplot_router = APIRouter(prefix="/gnuplot", tags=["gnuplot"])
 
+COMMON_ERROR_RESPONSES = {
+    400: {
+        "model": HttpErrorResponse,
+        "description": "Bad request. The gnuplot input was unsafe, invalid, or could not render.",
+    },
+    500: {
+        "model": InternalErrorResponse,
+        "description": "Internal server error.",
+    },
+}
+
 
 @gnuplot_router.get(
     "/health",
+    response_model=GnuplotHealthResponse,
     summary="Check gnuplot tool server health",
+    description=(
+        "Use this endpoint to verify that the tool server is reachable, that pygnuplot "
+        "is importable, and that the native gnuplot executable is visible in PATH."
+    ),
     operation_id="gnuplot_health",
 )
 async def gnuplot_health():
@@ -1330,28 +1617,45 @@ async def gnuplot_health():
 
 @gnuplot_router.post(
     "/plot_function",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Plot one or more 2D gnuplot function expressions",
+    description=(
+        "Use this endpoint when the user asks to plot 2D mathematical functions or "
+        "expressions such as sin(x), polynomials, exponentials, or comparisons across "
+        "one x-axis. Prefer PNG output for Open WebUI; omit output or choose a .png filename."
+    ),
     operation_id="gnuplot_plot_function",
     responses={
         200: {
-            "description": "Successful Response",
+            "model": GnuplotSuccessResponse,
+            "description": "Successful PNG/SVG/PDF/etc. plot response.",
             "content": {
                 "application/json": {
                     "example": {
                         "success": True,
                         "operation": "plot_function",
+                        "terminal": 'pngcairo enhanced font "arial,10" size 960,640',
                         "output": {
+                            "path": "/tmp/gnuplot-tool-server/simple.png",
                             "filename": "simple.png",
                             "url": "http://localhost:8000/outputs/simple.png",
                             "mime_type": "image/png",
+                            "size_bytes": 12345,
+                        },
+                        "result": {
+                            "text_output": (
+                                "Created plot_function output at "
+                                "http://localhost:8000/outputs/simple.png"
+                            ),
+                            "output_path": "/tmp/gnuplot-tool-server/simple.png",
+                            "output_url": "http://localhost:8000/outputs/simple.png",
                         },
                     }
                 }
             },
         },
-        400: {"description": "Bad Request"},
-        500: {"description": "Internal Server Error"},
+        **COMMON_ERROR_RESPONSES,
     },
 )
 async def gnuplot_plot_function(
@@ -1359,6 +1663,16 @@ async def gnuplot_plot_function(
     data: PlotFunctionInput = Body(
         ...,
         openapi_examples={
+            "open_webui_default_png": {
+                "summary": "Default PNG for Open WebUI markdown",
+                "description": (
+                    "Omit output and terminal when a markdown-renderable PNG URL is wanted."
+                ),
+                "value": {
+                    "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+                    "settings": {"grid": "", "xlabel": '"x"', "ylabel": '"f(x)"'},
+                },
+            },
             "simple": {
                 "summary": "Plot simple trigonometric functions",
                 "value": {
@@ -1373,7 +1687,22 @@ async def gnuplot_plot_function(
                         "key": "left top",
                     },
                 },
-            }
+            },
+            "polynomial_roots": {
+                "summary": "Plot a polynomial and visible axes",
+                "value": {
+                    "output": "cubic-roots.png",
+                    "items": [
+                        '[-1:5] x**3 - 6*x**2 + 11*x - 6 title "f(x)" with lines'
+                    ],
+                    "settings": {
+                        "title": '"Cubic With Three Real Roots"',
+                        "grid": "",
+                        "xzeroaxis": "",
+                        "yzeroaxis": "",
+                    },
+                },
+            },
         },
     ),
 ):
@@ -1389,9 +1718,16 @@ async def gnuplot_plot_function(
 
 @gnuplot_router.post(
     "/plot_file",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Plot 2D data from a file or inline data",
+    description=(
+        "Use this endpoint when the user provides an existing data file, pasted rows, "
+        "CSV-like data, or an LLM-generated table that should be plotted as 2D data. "
+        "Inline data is written to a safe temporary file before plotting."
+    ),
     operation_id="gnuplot_plot_file",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_plot_file(
     request: Request,
@@ -1407,6 +1743,22 @@ async def gnuplot_plot_file(
                     "title": "x squared",
                     "style": "with linespoints",
                     "settings": {"grid": "", "xlabel": '"x"', "ylabel": '"y"'},
+                },
+            },
+            "csv_inline_data": {
+                "summary": "Plot CSV-style inline data",
+                "value": {
+                    "output": "temperature.png",
+                    "data": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n4,24.9",
+                    "separator": ",",
+                    "using": "1:2",
+                    "title": "Temperature",
+                    "style": "with linespoints",
+                    "settings": {
+                        "grid": "",
+                        "xlabel": '"time"',
+                        "ylabel": '"Temperature C"',
+                    },
                 },
             },
             "existing_file": {
@@ -1432,9 +1784,15 @@ async def gnuplot_plot_file(
 
 @gnuplot_router.post(
     "/splot_function",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Plot one or more 3D gnuplot function expressions",
+    description=(
+        "Use this endpoint when the user asks for a 3D surface or mesh from a formula "
+        "in x and y. Prefer PNG output for Open WebUI markdown."
+    ),
     operation_id="gnuplot_splot_function",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_splot_function(
     request: Request,
@@ -1452,6 +1810,7 @@ async def gnuplot_splot_function(
                         "title": '"3D Surface"',
                         "hidden3d": "",
                         "pm3d": "",
+                        "view": "60, 35",
                     },
                 },
             }
@@ -1470,9 +1829,15 @@ async def gnuplot_splot_function(
 
 @gnuplot_router.post(
     "/splot_file",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Plot 3D data from a file or inline data",
+    description=(
+        "Use this endpoint when the user provides XYZ rows, an XYZ data file, or "
+        "LLM-generated 3D points that should be rendered with gnuplot splot."
+    ),
     operation_id="gnuplot_splot_file",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_splot_file(
     request: Request,
@@ -1505,9 +1870,16 @@ async def gnuplot_splot_file(
 
 @gnuplot_router.post(
     "/plot_data",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Plot inline 2D data using py-gnuplot plot_data",
+    description=(
+        "Use this endpoint for generated inline 2D data when no reusable data file "
+        "is needed. The plot items should omit a filename and start with clauses like "
+        "`using 1:2 title ... with linespoints`."
+    ),
     operation_id="gnuplot_plot_data",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_plot_data(
     request: Request,
@@ -1522,7 +1894,19 @@ async def gnuplot_plot_data(
                     "items": ['using 1:2 title "x squared" with linespoints'],
                     "settings": {"grid": ""},
                 },
-            }
+            },
+            "scatter_with_trend": {
+                "summary": "Plot generated points with a simple trend line",
+                "value": {
+                    "output": "scatter-trend.png",
+                    "data": [[1, 2.1], [2, 2.9], [3, 3.7], [4, 4.2], [5, 5.1]],
+                    "items": [
+                        'using 1:2 title "measurements" with points pointtype 7',
+                        'using 1:(0.75*$1 + 1.4) title "trend" with lines',
+                    ],
+                    "settings": {"grid": "", "xlabel": '"x"', "ylabel": '"y"'},
+                },
+            },
         },
     ),
 ):
@@ -1538,9 +1922,15 @@ async def gnuplot_plot_data(
 
 @gnuplot_router.post(
     "/splot_data",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Plot inline 3D data using py-gnuplot splot_data",
+    description=(
+        "Use this endpoint for generated inline XYZ data when no reusable data file "
+        "is needed. The plot items should omit a filename and usually use columns 1:2:3."
+    ),
     operation_id="gnuplot_splot_data",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_splot_data(
     request: Request,
@@ -1571,9 +1961,15 @@ async def gnuplot_splot_data(
 
 @gnuplot_router.post(
     "/multiplot",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Create a gnuplot multiplot image",
+    description=(
+        "Use this endpoint when the user asks for multiple panels in one generated "
+        "figure, such as comparing related functions above and below each other."
+    ),
     operation_id="gnuplot_multiplot",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_multiplot(
     request: Request,
@@ -1615,9 +2011,16 @@ async def gnuplot_multiplot(
 
 @gnuplot_router.post(
     "/run_script",
+    response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
     summary="Run a .gnu/.gp gnuplot script file or inline script",
+    description=(
+        "Use this endpoint only when the user provides gnuplot script text or refers "
+        "to an existing .gnu/.gp/.plt/.gplot file. Prefer higher-level plotting "
+        "endpoints for ordinary function and data plots."
+    ),
     operation_id="gnuplot_run_script",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_run_script(
     request: Request,
@@ -1659,9 +2062,16 @@ async def gnuplot_run_script(
 
 @gnuplot_router.post(
     "/run_commands",
-    response_model_exclude_none=True,
+    response_model=GnuplotSuccessResponse,
     summary="Run raw gnuplot commands",
+    description=(
+        "Use this endpoint only when the user needs raw gnuplot command control. "
+        "For normal formulas, data tables, files, surfaces, and multiplots, prefer "
+        "the higher-level endpoints. Commands are checked for unsafe shell escapes "
+        "unless allow_unsafe_commands=true."
+    ),
     operation_id="gnuplot_run_commands",
+    responses=COMMON_ERROR_RESPONSES,
 )
 async def gnuplot_run_commands(
     request: Request,
@@ -1678,7 +2088,14 @@ async def gnuplot_run_commands(
                         'plot [-10:10] sin(x) title "sin(x)" with lines',
                     ],
                 },
-            }
+            },
+            "metadata_only": {
+                "summary": "Run setup commands without requiring output",
+                "value": {
+                    "commands": ['set title "Metadata Only"'],
+                    "expect_output": False,
+                },
+            },
         },
     ),
 ):
