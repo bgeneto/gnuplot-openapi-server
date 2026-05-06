@@ -150,7 +150,7 @@ or something like:
     @images-server host your-images-server.app
 
     handle @images-server {
-        handle_path /gnuplot-outputs/* {
+        handle_path /plot-outputs/* {
             rewrite * /outputs{path}
             reverse_proxy http://gnuplot-server:8000 {
                 import headers-proxy
