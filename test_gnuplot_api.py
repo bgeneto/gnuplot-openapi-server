@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -120,6 +121,12 @@ async def post_json(path: str, payload: dict):
         return await client.post(path, json=payload)
 
 
+def assert_cache_busted_png_url(url: str, expected_path_suffix: str):
+    parsed = urlparse(url)
+    assert parsed.path.endswith(expected_path_suffix)
+    assert parse_qs(parsed.query).get("v")
+
+
 @pytest.mark.asyncio
 async def test_health_and_openapi_schema_expose_gnuplot_tools():
     transport = ASGITransport(app=app)
@@ -166,6 +173,20 @@ async def test_health_and_openapi_schema_expose_gnuplot_tools():
         == "#/components/schemas/GnuplotHealthResponse"
     )
     assert "Use this endpoint" in paths["/gnuplot/plot_file"]["post"]["description"]
+    for path in (
+        "/gnuplot/plot_function",
+        "/gnuplot/plot_file",
+        "/gnuplot/splot_function",
+        "/gnuplot/splot_file",
+        "/gnuplot/plot_data",
+        "/gnuplot/splot_data",
+        "/gnuplot/multiplot",
+    ):
+        examples = paths[path]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["examples"]
+        for example in examples.values():
+            assert "output" not in example["value"]
 
     components = schema["components"]["schemas"]
     assert "OutputInfo" in components
@@ -202,6 +223,7 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert body["success"] is True
     assert body["operation"] == "plot_function"
     assert body["output"]["filename"] == "unit-plot.png"
+    assert_cache_busted_png_url(body["output"]["url"], "/outputs/unit-plot.png")
     assert body["output"]["mime_type"] == "image/png"
     assert body["output"]["data_uri"].startswith("data:image/png;base64,")
     assert Path(body["output"]["path"]).exists()
@@ -252,9 +274,8 @@ async def test_public_output_base_url_overrides_private_request_url(monkeypatch)
 
     assert response.status_code == 200
     body = response.json()
-    assert (
-        body["output"]["url"]
-        == "https://plots.example.test/plot-outputs/nested/unit%20plot.png"
+    assert_cache_busted_png_url(
+        body["output"]["url"], "/plot-outputs/nested/unit%20plot.png"
     )
     assert body["result"]["output_url"] == body["output"]["url"]
 
@@ -271,7 +292,7 @@ async def test_plot_function_defaults_to_png_for_open_webui_markdown():
     assert response.status_code == 200
     body = response.json()
     assert body["output"]["filename"].endswith(".png")
-    assert body["output"]["url"].endswith(".png")
+    assert_cache_busted_png_url(body["output"]["url"], ".png")
     assert body["output"]["mime_type"] == "image/png"
     assert body["terminal"].startswith("pngcairo")
     assert 'font "DejaVu Sans,18"' in body["terminal"]

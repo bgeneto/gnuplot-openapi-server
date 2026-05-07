@@ -8,7 +8,7 @@ The architecture splits responsibilities into two containers:
 
 The server wraps `py-gnuplot`, writes generated files and temporary data/script files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/images`), and serves plot outputs back from `/outputs/{filename}` through the Nginx sidecar.
 
-PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Omit `output` or use a `.png` filename to get the server's default high-resolution `pngcairo` terminal.
+PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. LLM callers should omit `output` unless the user explicitly asks for a stable filename; omitted outputs get unique PNG filenames and the default high-resolution `pngcairo` terminal.
 
 ## What It Provides
 
@@ -165,10 +165,10 @@ or something like:
     }
 ```
 
-Then a generated file such as `/tmp/images/trig.png` is returned to the LLM as:
+Then a generated file such as `/tmp/images/gnuplot-1f2e3d4c.png` is returned to the LLM as:
 
 ```text
-https://your-public-host.example/plot-outputs/trig.png
+https://your-public-host.example/plot-outputs/gnuplot-1f2e3d4c.png?v=123-456
 ```
 
 Only `/plot-outputs/*` needs to be public. The plotting API can remain private on the Docker network.
@@ -196,7 +196,7 @@ Most plotting endpoints inherit these fields:
 
 | Field | Purpose |
 | --- | --- |
-| `output` | Optional output filename. Relative names are written under `GNUPLOT_OUTPUT_DIR`; omitted outputs get a unique `.png` filename. |
+| `output` | Optional output filename. Relative names are written under `GNUPLOT_OUTPUT_DIR`; LLM callers should omit this unless the user explicitly asks for a stable filename. Omitted outputs get a unique `.png` filename. |
 | `terminal` or `term` | Optional gnuplot terminal string. If omitted, the server chooses one from the output extension. For Open WebUI, prefer the default high-resolution `pngcairo` behavior. |
 | `width`, `height` | Default image size used by generated terminal settings. Defaults to `1600` by `1000` for PNG output. |
 | `settings` | Mapping of gnuplot `set` options. Example: `{"grid": "", "title": "\"Demo\""}`. For `/gnuplot/plot_function` and 2D `/gnuplot/multiplot` panels, the server defaults to `samples=2000` unless you set `samples` yourself. If you send `grid` as an empty string, the server enables a more visible default grid style; send an explicit grid clause to override it. |
@@ -268,6 +268,16 @@ explicit `terminal` such as:
 
 Use SVG or PDF only when the caller explicitly wants a vector format.
 
+## Output Naming
+
+For normal LLM/Open WebUI usage, omit `output`. The server will create a unique
+PNG filename such as `gnuplot-<id>.png`, which avoids browser or markdown cache
+confusion when several plots are generated during one conversation.
+
+Only send `output` when the user explicitly requests a stable filename or path.
+If a fixed name is supplied, response URLs include a `?v=...` cache-busting
+query so regenerated images are still fetched freshly by the browser.
+
 ## 2D Function Sampling
 
 For `/gnuplot/plot_function`, the server now applies `set samples 2000` by default when the request does not already include `settings.samples`. This improves curve smoothness for typical LLM-generated function plots without taking control away from the caller.
@@ -278,9 +288,9 @@ This is intentionally limited to 2D function-style plots. For 3D `splot` request
 
 ## Grid Visibility
 
-If a request uses `"settings": {"grid": ""}`, the server now expands that into `front lc rgb "#7f8c8d" lw 1.0 dashtype 2` instead of bare `set grid`. That keeps the common LLM payload short while making the dashed grid easier to see in generated PNGs after browser downscaling without visually competing with the solid axes.
+If a request uses `"settings": {"grid": ""}`, the server now expands that into `front lc rgb "#7f8c8d" lw 1.5 dashtype 2` instead of bare `set grid`. That keeps the common LLM payload short while making the dashed grid easier to see in generated PNGs after browser downscaling without visually competing with the solid axes.
 
-If you want full control, pass your own `grid` clause, for example `back lc rgb "#808080" lw 2`, and the server will use it as-is.
+If you want full control, pass your own `grid` clause, for example `back lc rgb "#808080" lw 2.0`, and the server will use it as-is.
 
 ## LLM Prompt Examples
 
@@ -367,7 +377,6 @@ Create a 2D function plot:
 curl -X POST http://localhost:8000/gnuplot/plot_function \
   -H 'Content-Type: application/json' \
   -d '{
-    "output": "trig.png",
     "items": [
       "[-10:10] sin(x) title \"sin(x)\" with lines",
       "cos(x) title \"cos(x)\" with lines"
@@ -386,7 +395,6 @@ Plot inline 2D data through a temporary data file:
 curl -X POST http://localhost:8000/gnuplot/plot_file \
   -H 'Content-Type: application/json' \
   -d '{
-    "output": "inline-data.png",
     "data": [[0, 0], [1, 1], [2, 4], [3, 9]],
     "using": "1:2",
     "title": "x squared",
@@ -401,7 +409,6 @@ Plot a JSON-uploaded CSV file:
 curl -X POST http://localhost:8000/gnuplot/plot_file \
   -H 'Content-Type: application/json' \
   -d '{
-    "output": "uploaded-temperature.png",
     "uploaded_file": {
       "filename": "temperature.csv",
       "content": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n",
@@ -420,7 +427,6 @@ Create a 3D surface:
 curl -X POST http://localhost:8000/gnuplot/splot_function \
   -H 'Content-Type: application/json' \
   -d '{
-    "output": "surface.png",
     "items": [
       "[-5:5][-5:5] sin(sqrt(x*x+y*y))/sqrt(x*x+y*y) title \"sinc surface\""
     ],
@@ -434,7 +440,6 @@ Run inline gnuplot commands:
 curl -X POST http://localhost:8000/gnuplot/run_commands \
   -H 'Content-Type: application/json' \
   -d '{
-    "output": "raw-commands.png",
     "commands": [
       "set title \"Raw Commands\"",
       "set grid",
@@ -450,16 +455,16 @@ Successful plotting responses include:
   "success": true,
   "operation": "plot_function",
   "output": {
-    "path": "/tmp/images/trig.png",
-    "filename": "trig.png",
-    "url": "http://localhost:8080/outputs/trig.png",
+    "path": "/tmp/images/gnuplot-1f2e3d4c.png",
+    "filename": "gnuplot-1f2e3d4c.png",
+    "url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c.png?v=123-456",
     "mime_type": "image/png",
     "size_bytes": 12345
   },
   "result": {
-    "text_output": "Created plot_function output at http://localhost:8080/outputs/trig.png",
-    "output_path": "/tmp/images/trig.png",
-    "output_url": "http://localhost:8080/outputs/trig.png"
+    "text_output": "Created plot_function output at http://localhost:8080/outputs/gnuplot-1f2e3d4c.png?v=123-456",
+    "output_path": "/tmp/images/gnuplot-1f2e3d4c.png",
+    "output_url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c.png?v=123-456"
   }
 }
 ```
@@ -485,7 +490,7 @@ Recommended URLs:
 For plots you want shown directly in markdown, use the PNG URL returned in `output.url`. In the Docker setup, this points to the Nginx sidecar:
 
 ```markdown
-![Generated plot](http://gnuplot-nginx:80/outputs/trig.png)
+![Generated plot](http://gnuplot-nginx:80/outputs/gnuplot-1f2e3d4c.png?v=123-456)
 ```
 
 ## Architecture

@@ -56,7 +56,7 @@ DEFAULT_IMAGE_HEIGHT = 1000
 DEFAULT_PNG_FONT = "DejaVu Sans"
 DEFAULT_PNG_FONT_SIZE = 18
 DEFAULT_2D_FUNCTION_SAMPLES = 2000
-DEFAULT_GRID_STYLE = 'front lc rgb "#7f8c8d" lw 1.0 dashtype 2'
+DEFAULT_GRID_STYLE = 'front lc rgb "#7f8c8d" lw 1.5 dashtype 2'
 MAX_UPLOADED_DATA_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADED_DATA_FILE_BASE64_CHARS = 7 * 1024 * 1024
 ALLOWED_UPLOADED_DATA_SUFFIXES = {
@@ -88,8 +88,9 @@ app = FastAPI(
         "/gnuplot/splot_function and /gnuplot/splot_file for 3D plots, /gnuplot/multiplot "
         "for multi-panel figures, and /gnuplot/run_script or /gnuplot/run_commands only "
         "when the user asks for script/command-level control. For Open WebUI markdown, "
-        "prefer PNG output: omit output or use a .png filename so the server chooses "
-        "the default pngcairo terminal and returns an image/png URL under /outputs."
+        "prefer PNG output and omit output unless the user explicitly asks for a stable "
+        "filename; omitted outputs get unique PNG filenames under /outputs using the "
+        "default pngcairo terminal."
     ),
 )
 
@@ -116,20 +117,21 @@ class OutputInfo(BaseModel):
     path: str = Field(
         ...,
         description="Absolute server-side path to the generated output file.",
-        examples=["/tmp/images/trig.png"],
+        examples=["/tmp/images/gnuplot-1f2e3d4c.png"],
     )
     filename: str = Field(
         ...,
         description="Output filename. It ends with .png by default for Open WebUI.",
-        examples=["trig.png"],
+        examples=["gnuplot-1f2e3d4c.png"],
     )
     url: str = Field(
         ...,
         description=(
             "HTTP URL for the generated file. Return this URL to the user, usually "
-            "as markdown image syntax for PNG outputs."
+            "as markdown image syntax for PNG outputs. The URL can include a "
+            "cache-busting query parameter when a file has just been generated."
         ),
-        examples=["http://localhost:8000/outputs/trig.png"],
+        examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"],
     )
     mime_type: str = Field(
         ...,
@@ -158,18 +160,18 @@ class OperationResult(BaseModel):
         ...,
         description="Short natural-language status message for tool callers.",
         examples=[
-            "Created plot_function output at http://localhost:8000/outputs/trig.png"
+            "Created plot_function output at http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"
         ],
     )
     output_path: str = Field(
         ...,
         description="Absolute server-side output path.",
-        examples=["/tmp/images/trig.png"],
+        examples=["/tmp/images/gnuplot-1f2e3d4c.png"],
     )
     output_url: Optional[str] = Field(
         None,
         description="HTTP URL to the generated output, or null when no output was expected.",
-        examples=["http://localhost:8000/outputs/trig.png"],
+        examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"],
     )
 
 
@@ -191,19 +193,19 @@ class GnuplotSuccessResponse(BaseModel):
                     "terminal": DEFAULT_PNG_TERMINAL,
                     "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
                     "output": {
-                        "path": "/tmp/images/trig.png",
-                        "filename": "trig.png",
-                        "url": "http://localhost:8000/outputs/trig.png",
+                        "path": "/tmp/images/gnuplot-1f2e3d4c.png",
+                        "filename": "gnuplot-1f2e3d4c.png",
+                        "url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
                         "mime_type": "image/png",
                         "size_bytes": 12345,
                     },
                     "result": {
                         "text_output": (
                             "Created plot_function output at "
-                            "http://localhost:8000/outputs/trig.png"
+                            "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"
                         ),
-                        "output_path": "/tmp/images/trig.png",
-                        "output_url": "http://localhost:8000/outputs/trig.png",
+                        "output_path": "/tmp/images/gnuplot-1f2e3d4c.png",
+                        "output_url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
                     },
                 }
             ]
@@ -282,8 +284,9 @@ class GnuplotBaseInput(BaseModel):
         populate_by_name=True,
         json_schema_extra={
             "description": (
-                "Common plotting options. For Open WebUI markdown, omit output or use "
-                "a .png filename so the server returns an image/png URL. Relative "
+                "Common plotting options. For Open WebUI markdown, omit output unless "
+                "the user explicitly asks for a stable filename. Omitted outputs get "
+                "unique PNG filenames, avoiding stale cached images. Relative "
                 "outputs are written under GNUPLOT_OUTPUT_DIR. Commands are checked "
                 "for shell-like unsafe gnuplot constructs unless allow_unsafe_commands "
                 "is true. If GNUPLOT_PUBLIC_OUTPUT_BASE_URL is configured, response "
@@ -297,11 +300,12 @@ class GnuplotBaseInput(BaseModel):
         description=(
             "Optional output filename/path. Relative paths are written under "
             f"{DEFAULT_OUTPUT_DIR}. If omitted, a unique .png file is created and "
-            "the default pngcairo terminal is used. For Open WebUI markdown, omit "
-            "this field or choose a .png filename."
+            "the default pngcairo terminal is used. For Open WebUI markdown, LLM "
+            "callers should omit this field unless the user explicitly requests a "
+            "stable filename; repeated fixed names can show stale cached images."
         ),
         max_length=500,
-        examples=["plot.png", "reports/plot.png"],
+        examples=["reports/requested-stable-name.png"],
     )
     terminal: Optional[str] = Field(
         None,
@@ -1375,11 +1379,14 @@ class GnuplotTool:
             mimetypes.guess_type(output_path.name)[0] or "application/octet-stream"
         )
         output_url = self._output_url(request, relative_path)
+        output_version = f"{output_path.stat().st_mtime_ns}-{size_bytes}"
+        separator = "&" if "?" in output_url else "?"
+        versioned_output_url = f"{output_url}{separator}v={output_version}"
 
         output_info: dict[str, Any] = {
             "path": str(output_path),
             "filename": output_path.name,
-            "url": output_url,
+            "url": versioned_output_url,
             "mime_type": mime_type,
             "size_bytes": size_bytes,
         }
@@ -1921,9 +1928,10 @@ async def gnuplot_health():
     description=(
         "Use this endpoint when the user asks to plot 2D mathematical functions or "
         "expressions such as sin(x), polynomials, exponentials, or comparisons across "
-        "one x-axis. Prefer PNG output for Open WebUI; omit output or choose a .png "
-        "filename. When settings.samples is omitted, the server uses samples=2000 "
-        "for smoother 2D curves."
+        "one x-axis. Prefer PNG output for Open WebUI; omit output unless the user "
+        "explicitly asks for a stable filename, so the server creates a unique PNG "
+        "name. When settings.samples is omitted, the server uses samples=2000 for "
+        "smoother 2D curves."
     ),
     operation_id="gnuplot_plot_function",
     responses={
@@ -1937,19 +1945,19 @@ async def gnuplot_health():
                         "operation": "plot_function",
                         "terminal": DEFAULT_PNG_TERMINAL,
                         "output": {
-                            "path": "/tmp/images/simple.png",
-                            "filename": "simple.png",
-                            "url": "http://localhost:8000/outputs/simple.png",
+                            "path": "/tmp/images/gnuplot-1f2e3d4c.png",
+                            "filename": "gnuplot-1f2e3d4c.png",
+                            "url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
                             "mime_type": "image/png",
                             "size_bytes": 12345,
                         },
                         "result": {
                             "text_output": (
                                 "Created plot_function output at "
-                                "http://localhost:8000/outputs/simple.png"
+                                "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"
                             ),
-                            "output_path": "/tmp/images/simple.png",
-                            "output_url": "http://localhost:8000/outputs/simple.png",
+                            "output_path": "/tmp/images/gnuplot-1f2e3d4c.png",
+                            "output_url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
                         },
                     }
                 }
@@ -1976,7 +1984,6 @@ async def gnuplot_plot_function(
             "simple": {
                 "summary": "Plot simple trigonometric functions",
                 "value": {
-                    "output": "simple-functions.png",
                     "items": [
                         '[-10:10] sin(x) title "sin(x)" with lines',
                         'cos(x) title "cos(x)" with lines',
@@ -1991,7 +1998,6 @@ async def gnuplot_plot_function(
             "polynomial_roots": {
                 "summary": "Plot a polynomial and visible axes",
                 "value": {
-                    "output": "cubic-roots.png",
                     "items": [
                         '[-1:5] x**3 - 6*x**2 + 11*x - 6 title "f(x)" with lines'
                     ],
@@ -2038,7 +2044,6 @@ async def gnuplot_plot_file(
             "inline_data": {
                 "summary": "Write inline data to a temporary file and plot it",
                 "value": {
-                    "output": "inline-data.png",
                     "data": [[0, 0], [1, 1], [2, 4], [3, 9]],
                     "using": "1:2",
                     "title": "x squared",
@@ -2049,7 +2054,6 @@ async def gnuplot_plot_file(
             "csv_inline_data": {
                 "summary": "Plot CSV-style inline data",
                 "value": {
-                    "output": "temperature.png",
                     "data": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n4,24.9",
                     "separator": ",",
                     "using": "1:2",
@@ -2065,7 +2069,6 @@ async def gnuplot_plot_file(
             "uploaded_csv_file": {
                 "summary": "Plot a JSON-uploaded CSV file",
                 "value": {
-                    "output": "uploaded-temperature.png",
                     "uploaded_file": {
                         "filename": "temperature.csv",
                         "content": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n",
@@ -2084,7 +2087,6 @@ async def gnuplot_plot_file(
             "existing_file": {
                 "summary": "Plot an existing data file",
                 "value": {
-                    "output": "file-plot.png",
                     "file_path": "data/example.dat",
                     "items": ['{file} using 1:2 title "series" with lines'],
                 },
@@ -2122,7 +2124,6 @@ async def gnuplot_splot_function(
             "surface": {
                 "summary": "Plot a 3D surface function",
                 "value": {
-                    "output": "surface.png",
                     "items": [
                         '[-5:5][-5:5] sin(sqrt(x*x+y*y))/sqrt(x*x+y*y) title "sinc surface"'
                     ],
@@ -2168,7 +2169,6 @@ async def gnuplot_splot_file(
             "inline_grid": {
                 "summary": "Write inline XYZ data to a temporary file and splot it",
                 "value": {
-                    "output": "xyz-surface.png",
                     "data": [[0, 0, 0], [0, 1, 1], [1, 0, 1], [1, 1, 2]],
                     "using": "1:2:3",
                     "title": "z = x + y",
@@ -2179,7 +2179,6 @@ async def gnuplot_splot_file(
             "uploaded_xyz_file": {
                 "summary": "Plot a JSON-uploaded XYZ data file",
                 "value": {
-                    "output": "uploaded-xyz.png",
                     "upload": {
                         "filename": "points.dat",
                         "content": "0 0 0\n0 1 1\n1 0 1\n1 1 2\n",
@@ -2224,7 +2223,6 @@ async def gnuplot_plot_data(
             "plot_data": {
                 "summary": "Use py-gnuplot plot_data with generated data",
                 "value": {
-                    "output": "plot-data.png",
                     "data": [[0, 0], [1, 1], [2, 4], [3, 9]],
                     "items": ['using 1:2 title "x squared" with linespoints'],
                     "settings": {"grid": ""},
@@ -2233,7 +2231,6 @@ async def gnuplot_plot_data(
             "scatter_with_trend": {
                 "summary": "Plot generated points with a simple trend line",
                 "value": {
-                    "output": "scatter-trend.png",
                     "data": [[1, 2.1], [2, 2.9], [3, 3.7], [4, 4.2], [5, 5.1]],
                     "items": [
                         'using 1:2 title "measurements" with points pointtype 7',
@@ -2275,7 +2272,6 @@ async def gnuplot_splot_data(
             "splot_data": {
                 "summary": "Use py-gnuplot splot_data with generated XYZ data",
                 "value": {
-                    "output": "splot-data.png",
                     "data": [[0, 0, 0], [0, 1, 1], [1, 0, 1], [1, 1, 2]],
                     "items": ['using 1:2:3 title "z = x + y" with points'],
                     "settings": {"view": "60, 35", "grid": ""},
@@ -2317,7 +2313,6 @@ async def gnuplot_multiplot(
             "two_panels": {
                 "summary": "Two stacked panels",
                 "value": {
-                    "output": "multiplot.png",
                     "layout": '2,1 title "Two Panels"',
                     "settings": {"grid": ""},
                     "panels": [
@@ -2368,7 +2363,6 @@ async def gnuplot_run_script(
             "inline_script": {
                 "summary": "Run inline gnuplot script text",
                 "value": {
-                    "output": "script-plot.png",
                     "script": "\n".join(
                         [
                             'set title "Script Plot"',
@@ -2381,7 +2375,6 @@ async def gnuplot_run_script(
             "script_file": {
                 "summary": "Run an existing .gnu script file",
                 "value": {
-                    "output": "from-script.png",
                     "script_path": "scripts/example.gnu",
                 },
             },
@@ -2419,7 +2412,6 @@ async def gnuplot_run_commands(
             "raw_commands": {
                 "summary": "Run raw plotting commands",
                 "value": {
-                    "output": "raw-commands.png",
                     "commands": [
                         'set title "Raw Commands"',
                         "set grid",
