@@ -27,12 +27,14 @@ import sys
 import time
 import traceback
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import (
     AliasChoices,
@@ -2447,6 +2449,62 @@ async def gnuplot_run_commands(
 
 # Include gnuplot router in the app
 app.include_router(gnuplot_router)
+
+
+def _inline_schema_refs(schema: Any, components: dict[str, Any]) -> Any:
+    """Inline local component refs in a JSON schema fragment."""
+    if isinstance(schema, list):
+        return [_inline_schema_refs(item, components) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+        name = ref.rsplit("/", 1)[-1]
+        target = deepcopy(components.get(name, {}))
+        siblings = {key: value for key, value in schema.items() if key != "$ref"}
+        target.update(siblings)
+        return _inline_schema_refs(target, components)
+
+    return {
+        key: _inline_schema_refs(value, components) for key, value in schema.items()
+    }
+
+
+def _inline_request_body_refs(openapi_schema: dict[str, Any]) -> None:
+    """Make request schemas friendly to tool converters that drop components."""
+    components = openapi_schema.get("components", {}).get("schemas", {})
+    for path_item in openapi_schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            content = (
+                operation.get("requestBody", {})
+                .get("content", {})
+                .get("application/json")
+            )
+            if not content or "schema" not in content:
+                continue
+            content["schema"] = _inline_schema_refs(content["schema"], components)
+
+
+def custom_openapi() -> dict[str, Any]:
+    """Generate OpenAPI with dereferenced request schemas for LLM tool callers."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    _inline_request_body_refs(openapi_schema)
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 @app.exception_handler(Exception)

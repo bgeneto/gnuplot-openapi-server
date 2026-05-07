@@ -185,6 +185,8 @@ Path safety is also part of the security model:
 
 The FastAPI app mounts `/outputs` at import time using `DEFAULT_OUTPUT_DIR`. Tests monkeypatch `DEFAULT_OUTPUT_DIR` and use direct response metadata checks; be careful if changing app mounting behavior.
 
+The custom OpenAPI generator inlines `$ref` values inside request body schemas while preserving component refs elsewhere. This is deliberate: some OpenAI-compatible tool converters, including LiteLLM paths used by small models, dereference endpoint parameter schemas without carrying the top-level `components` object.
+
 Pydantic v2 is required. `requirements.txt` pins lower bounds for FastAPI and Pydantic because `main.py` uses `field_validator`, `ConfigDict`, and `AliasChoices`.
 
 Important Pydantic gotcha: inherited validator method names can override each other. Keep validator method names unique across base and child models. For example, do not reuse `validate_optional_text` in both `GnuplotBaseInput` and `FilePlotInput`.

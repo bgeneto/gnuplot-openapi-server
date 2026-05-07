@@ -134,6 +134,16 @@ def assert_cache_busted_png_url(
     assert parse_qs(parsed.query).get("v")
 
 
+def schema_contains_ref(schema):
+    if isinstance(schema, dict):
+        return "$ref" in schema or any(
+            schema_contains_ref(value) for value in schema.values()
+        )
+    if isinstance(schema, list):
+        return any(schema_contains_ref(item) for item in schema)
+    return False
+
+
 @pytest.mark.asyncio
 async def test_health_and_openapi_schema_expose_gnuplot_tools():
     transport = ASGITransport(app=app)
@@ -194,6 +204,10 @@ async def test_health_and_openapi_schema_expose_gnuplot_tools():
         ]["examples"]
         for example in examples.values():
             assert "output" not in example["value"]
+        request_schema = paths[path]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        assert not schema_contains_ref(request_schema)
 
     components = schema["components"]["schemas"]
     assert "OutputInfo" in components
