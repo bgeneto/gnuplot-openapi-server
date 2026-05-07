@@ -71,7 +71,7 @@ Input file reads are allowed only under:
 - `GNUPLOT_OUTPUT_DIR`,
 - any extra roots in `GNUPLOT_ALLOWED_ROOTS`.
 
-Output paths are always constrained to `GNUPLOT_OUTPUT_DIR`. Relative `output` values are resolved under that directory. Absolute or relative paths that escape it must remain rejected.
+Output paths are always constrained to `GNUPLOT_OUTPUT_DIR`. Relative `output` values are resolved under that directory and treated as readable path/name hints only; the server appends a UUID to the final filename while preserving the requested directory, stem, and extension. Absolute or relative paths that escape `GNUPLOT_OUTPUT_DIR` must remain rejected.
 
 ## API Surface
 
@@ -132,6 +132,12 @@ When no `output` is supplied:
 - create a unique `.png` filename,
 - return an `image/png` response MIME type,
 - use a terminal beginning with `pngcairo`.
+
+When `output` is supplied:
+
+- still create a unique final filename by appending a UUID to the requested stem,
+- preserve the requested directory and extension when the path is safe,
+- include a cache-busting `?v=...` query in returned output URLs.
 
 When `output` is supplied with a `.png` suffix and no explicit terminal:
 
@@ -254,7 +260,7 @@ curl -X POST http://localhost:8000/gnuplot/plot_function \
 The plot response should include a `.png` `output.url` that can be embedded in Open WebUI markdown:
 
 ```markdown
-![Generated plot](http://gnuplot-server:8000/outputs/example.png)
+![Generated plot](http://gnuplot-server:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456)
 ```
 
 For browser-rendered markdown, prefer a public static prefix and expose only the output folder. Example Caddy route:

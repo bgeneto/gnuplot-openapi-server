@@ -8,7 +8,7 @@ The architecture splits responsibilities into two containers:
 
 The server wraps `py-gnuplot`, writes generated files and temporary data/script files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/images`), and serves plot outputs back from `/outputs/{filename}` through the Nginx sidecar.
 
-PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. LLM callers should omit `output` unless the user explicitly asks for a stable filename; omitted outputs get unique PNG filenames and the default high-resolution `pngcairo` terminal.
+PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Output filenames are always made unique with a UUID; omitted outputs get unique PNG filenames and the default high-resolution `pngcairo` terminal.
 
 ## What It Provides
 
@@ -165,10 +165,10 @@ or something like:
     }
 ```
 
-Then a generated file such as `/tmp/images/gnuplot-1f2e3d4c.png` is returned to the LLM as:
+Then a generated file such as `/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png` is returned to the LLM as:
 
 ```text
-https://your-public-host.example/plot-outputs/gnuplot-1f2e3d4c.png?v=123-456
+https://your-public-host.example/plot-outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456
 ```
 
 Only `/plot-outputs/*` needs to be public. The plotting API can remain private on the Docker network.
@@ -196,7 +196,7 @@ Most plotting endpoints inherit these fields:
 
 | Field | Purpose |
 | --- | --- |
-| `output` | Optional output filename. Relative names are written under `GNUPLOT_OUTPUT_DIR`; LLM callers should omit this unless the user explicitly asks for a stable filename. Omitted outputs get a unique `.png` filename. |
+| `output` | Optional output filename/path hint. Relative names are written under `GNUPLOT_OUTPUT_DIR`; the server appends a UUID to the final filename while preserving the requested directory, readable stem, and extension. Omitted outputs get a unique `.png` filename. |
 | `terminal` or `term` | Optional gnuplot terminal string. If omitted, the server chooses one from the output extension. For Open WebUI, prefer the default high-resolution `pngcairo` behavior. |
 | `width`, `height` | Default image size used by generated terminal settings. Defaults to `1600` by `1000` for PNG output. |
 | `settings` | Mapping of gnuplot `set` options. Example: `{"grid": "", "title": "\"Demo\""}`. For `/gnuplot/plot_function` and 2D `/gnuplot/multiplot` panels, the server defaults to `samples=2000` unless you set `samples` yourself. If you send `grid` as an empty string, the server enables a more visible default grid style; send an explicit grid clause to override it. |
@@ -274,9 +274,10 @@ For normal LLM/Open WebUI usage, omit `output`. The server will create a unique
 PNG filename such as `gnuplot-<id>.png`, which avoids browser or markdown cache
 confusion when several plots are generated during one conversation.
 
-Only send `output` when the user explicitly requests a stable filename or path.
-If a fixed name is supplied, response URLs include a `?v=...` cache-busting
-query so regenerated images are still fetched freshly by the browser.
+If `output` is supplied, it is treated as a readable filename/path hint, not an
+exact final name. For example, `trig_functions.png` becomes something like
+`trig_functions-<uuid>.png`. The requested directory and extension are preserved,
+and response URLs also include a `?v=...` cache-busting query.
 
 ## 2D Function Sampling
 
@@ -455,16 +456,16 @@ Successful plotting responses include:
   "success": true,
   "operation": "plot_function",
   "output": {
-    "path": "/tmp/images/gnuplot-1f2e3d4c.png",
-    "filename": "gnuplot-1f2e3d4c.png",
-    "url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c.png?v=123-456",
+    "path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+    "filename": "gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+    "url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
     "mime_type": "image/png",
     "size_bytes": 12345
   },
   "result": {
-    "text_output": "Created plot_function output at http://localhost:8080/outputs/gnuplot-1f2e3d4c.png?v=123-456",
-    "output_path": "/tmp/images/gnuplot-1f2e3d4c.png",
-    "output_url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c.png?v=123-456"
+    "text_output": "Created plot_function output at http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
+    "output_path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+    "output_url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"
   }
 }
 ```
@@ -490,7 +491,7 @@ Recommended URLs:
 For plots you want shown directly in markdown, use the PNG URL returned in `output.url`. In the Docker setup, this points to the Nginx sidecar:
 
 ```markdown
-![Generated plot](http://gnuplot-nginx:80/outputs/gnuplot-1f2e3d4c.png?v=123-456)
+![Generated plot](http://gnuplot-nginx:80/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456)
 ```
 
 ## Architecture

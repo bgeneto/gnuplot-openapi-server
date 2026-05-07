@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -121,9 +122,15 @@ async def post_json(path: str, payload: dict):
         return await client.post(path, json=payload)
 
 
-def assert_cache_busted_png_url(url: str, expected_path_suffix: str):
+def assert_cache_busted_png_url(
+    url: str, expected_path_suffix: str | None = None, path_pattern: str | None = None
+):
     parsed = urlparse(url)
-    assert parsed.path.endswith(expected_path_suffix)
+    if path_pattern is not None:
+        assert re.fullmatch(path_pattern, parsed.path)
+    else:
+        assert expected_path_suffix is not None
+        assert parsed.path.endswith(expected_path_suffix)
     assert parse_qs(parsed.query).get("v")
 
 
@@ -222,8 +229,10 @@ async def test_plot_function_returns_output_metadata_and_base64():
     body = response.json()
     assert body["success"] is True
     assert body["operation"] == "plot_function"
-    assert body["output"]["filename"] == "unit-plot.png"
-    assert_cache_busted_png_url(body["output"]["url"], "/outputs/unit-plot.png")
+    assert re.fullmatch(r"unit-plot-[0-9a-f]{32}\.png", body["output"]["filename"])
+    assert_cache_busted_png_url(
+        body["output"]["url"], path_pattern=r"/outputs/unit-plot-[0-9a-f]{32}\.png"
+    )
     assert body["output"]["mime_type"] == "image/png"
     assert body["output"]["data_uri"].startswith("data:image/png;base64,")
     assert Path(body["output"]["path"]).exists()
@@ -275,9 +284,31 @@ async def test_public_output_base_url_overrides_private_request_url(monkeypatch)
     assert response.status_code == 200
     body = response.json()
     assert_cache_busted_png_url(
-        body["output"]["url"], "/plot-outputs/nested/unit%20plot.png"
+        body["output"]["url"],
+        path_pattern=r"/plot-outputs/nested/unit%20plot-[0-9a-f]{32}\.png",
     )
     assert body["result"]["output_url"] == body["output"]["url"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_output_hint_generates_unique_filenames():
+    payload = {
+        "output": "repeat.png",
+        "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+    }
+
+    first = await post_json("/gnuplot/plot_function", payload)
+    second = await post_json("/gnuplot/plot_function", payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_output = first.json()["output"]
+    second_output = second.json()["output"]
+    assert re.fullmatch(r"repeat-[0-9a-f]{32}\.png", first_output["filename"])
+    assert re.fullmatch(r"repeat-[0-9a-f]{32}\.png", second_output["filename"])
+    assert first_output["filename"] != second_output["filename"]
+    assert Path(first_output["path"]).exists()
+    assert Path(second_output["path"]).exists()
 
 
 @pytest.mark.asyncio

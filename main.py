@@ -8,7 +8,8 @@ and .gnu script execution.
 
 Author: bgeneto
 Since: 2026-05-06
-Version: 1.0.0
+Version: 1.0.1
+Modified: 2026-05-07
 """
 
 from __future__ import annotations
@@ -88,9 +89,9 @@ app = FastAPI(
         "/gnuplot/splot_function and /gnuplot/splot_file for 3D plots, /gnuplot/multiplot "
         "for multi-panel figures, and /gnuplot/run_script or /gnuplot/run_commands only "
         "when the user asks for script/command-level control. For Open WebUI markdown, "
-        "prefer PNG output and omit output unless the user explicitly asks for a stable "
-        "filename; omitted outputs get unique PNG filenames under /outputs using the "
-        "default pngcairo terminal."
+        "prefer PNG output. Output filenames are always made unique with a UUID; "
+        "omitted outputs get unique PNG filenames under /outputs using the default "
+        "pngcairo terminal."
     ),
 )
 
@@ -117,12 +118,12 @@ class OutputInfo(BaseModel):
     path: str = Field(
         ...,
         description="Absolute server-side path to the generated output file.",
-        examples=["/tmp/images/gnuplot-1f2e3d4c.png"],
+        examples=["/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png"],
     )
     filename: str = Field(
         ...,
         description="Output filename. It ends with .png by default for Open WebUI.",
-        examples=["gnuplot-1f2e3d4c.png"],
+        examples=["gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png"],
     )
     url: str = Field(
         ...,
@@ -131,7 +132,7 @@ class OutputInfo(BaseModel):
             "as markdown image syntax for PNG outputs. The URL can include a "
             "cache-busting query parameter when a file has just been generated."
         ),
-        examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"],
+        examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"],
     )
     mime_type: str = Field(
         ...,
@@ -160,18 +161,18 @@ class OperationResult(BaseModel):
         ...,
         description="Short natural-language status message for tool callers.",
         examples=[
-            "Created plot_function output at http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"
+            "Created plot_function output at http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"
         ],
     )
     output_path: str = Field(
         ...,
         description="Absolute server-side output path.",
-        examples=["/tmp/images/gnuplot-1f2e3d4c.png"],
+        examples=["/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png"],
     )
     output_url: Optional[str] = Field(
         None,
         description="HTTP URL to the generated output, or null when no output was expected.",
-        examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"],
+        examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"],
     )
 
 
@@ -193,19 +194,19 @@ class GnuplotSuccessResponse(BaseModel):
                     "terminal": DEFAULT_PNG_TERMINAL,
                     "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
                     "output": {
-                        "path": "/tmp/images/gnuplot-1f2e3d4c.png",
-                        "filename": "gnuplot-1f2e3d4c.png",
-                        "url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
+                        "path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+                        "filename": "gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+                        "url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
                         "mime_type": "image/png",
                         "size_bytes": 12345,
                     },
                     "result": {
                         "text_output": (
                             "Created plot_function output at "
-                            "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"
+                            "http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"
                         ),
-                        "output_path": "/tmp/images/gnuplot-1f2e3d4c.png",
-                        "output_url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
+                        "output_path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+                        "output_url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
                     },
                 }
             ]
@@ -284,12 +285,13 @@ class GnuplotBaseInput(BaseModel):
         populate_by_name=True,
         json_schema_extra={
             "description": (
-                "Common plotting options. For Open WebUI markdown, omit output unless "
-                "the user explicitly asks for a stable filename. Omitted outputs get "
-                "unique PNG filenames, avoiding stale cached images. Relative "
-                "outputs are written under GNUPLOT_OUTPUT_DIR. Commands are checked "
-                "for shell-like unsafe gnuplot constructs unless allow_unsafe_commands "
-                "is true. If GNUPLOT_PUBLIC_OUTPUT_BASE_URL is configured, response "
+                "Common plotting options. For Open WebUI markdown, PNG output is "
+                "preferred. Output filenames are always made unique with a UUID; "
+                "when output is supplied it is treated as a readable path/name hint. "
+                "Relative outputs are written under GNUPLOT_OUTPUT_DIR. Commands "
+                "are checked for shell-like unsafe gnuplot constructs unless "
+                "allow_unsafe_commands is true. If GNUPLOT_PUBLIC_OUTPUT_BASE_URL "
+                "is configured, response "
                 "URLs use that public static prefix instead of the private tool URL."
             )
         },
@@ -298,14 +300,15 @@ class GnuplotBaseInput(BaseModel):
     output: Optional[str] = Field(
         None,
         description=(
-            "Optional output filename/path. Relative paths are written under "
-            f"{DEFAULT_OUTPUT_DIR}. If omitted, a unique .png file is created and "
-            "the default pngcairo terminal is used. For Open WebUI markdown, LLM "
-            "callers should omit this field unless the user explicitly requests a "
-            "stable filename; repeated fixed names can show stale cached images."
+            "Optional output filename/path hint. Relative paths are written under "
+            f"{DEFAULT_OUTPUT_DIR}. The server always appends a UUID to the final "
+            "filename, preserving the requested directory, readable stem, and "
+            "extension. If omitted, a unique .png file is created and the default "
+            "pngcairo terminal is used. For Open WebUI markdown, use the returned "
+            "output.url."
         ),
         max_length=500,
-        examples=["reports/requested-stable-name.png"],
+        examples=["reports/readable-name.png"],
     )
     terminal: Optional[str] = Field(
         None,
@@ -987,7 +990,7 @@ class GnuplotTool:
     def _resolve_output_file(
         self, output: Optional[str], default_suffix: str = ".png"
     ) -> Path:
-        """Resolve and validate an output file path."""
+        """Resolve and validate a unique output file path."""
         if output:
             raw_path = Path(output).expanduser()
             candidate = (
@@ -995,6 +998,13 @@ class GnuplotTool:
             )
             if not candidate.suffix:
                 candidate = candidate.with_suffix(default_suffix)
+            resolved_hint = self._ensure_allowed_path(
+                candidate, [self.output_dir], "Output"
+            )
+            unique_name = (
+                f"{resolved_hint.stem}-{uuid.uuid4().hex}{resolved_hint.suffix}"
+            )
+            candidate = resolved_hint.with_name(unique_name)
         else:
             candidate = self.output_dir / f"gnuplot-{uuid.uuid4().hex}{default_suffix}"
 
@@ -1118,16 +1128,12 @@ class GnuplotTool:
             return f"set {key}"
         return f"set {key} {text}"
 
-    def _setting_commands(
-        self, settings: dict[str, GnuplotOptionValue]
-    ) -> list[str]:
+    def _setting_commands(self, settings: dict[str, GnuplotOptionValue]) -> list[str]:
         """Build explicit gnuplot commands from normalized settings."""
         commands = []
         for key, value in settings.items():
             if isinstance(value, list):
-                commands.extend(
-                    self._setting_command(key, item) for item in value
-                )
+                commands.extend(self._setting_command(key, item) for item in value)
             else:
                 commands.append(self._setting_command(key, value))
         return commands
@@ -1928,10 +1934,10 @@ async def gnuplot_health():
     description=(
         "Use this endpoint when the user asks to plot 2D mathematical functions or "
         "expressions such as sin(x), polynomials, exponentials, or comparisons across "
-        "one x-axis. Prefer PNG output for Open WebUI; omit output unless the user "
-        "explicitly asks for a stable filename, so the server creates a unique PNG "
-        "name. When settings.samples is omitted, the server uses samples=2000 for "
-        "smoother 2D curves."
+        "one x-axis. Prefer PNG output for Open WebUI. The server creates a unique "
+        "PNG name even when output is supplied as a readable filename hint. When "
+        "settings.samples is omitted, the server uses samples=2000 for smoother 2D "
+        "curves."
     ),
     operation_id="gnuplot_plot_function",
     responses={
@@ -1945,19 +1951,19 @@ async def gnuplot_health():
                         "operation": "plot_function",
                         "terminal": DEFAULT_PNG_TERMINAL,
                         "output": {
-                            "path": "/tmp/images/gnuplot-1f2e3d4c.png",
-                            "filename": "gnuplot-1f2e3d4c.png",
-                            "url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
+                            "path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+                            "filename": "gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+                            "url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
                             "mime_type": "image/png",
                             "size_bytes": 12345,
                         },
                         "result": {
                             "text_output": (
                                 "Created plot_function output at "
-                                "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456"
+                                "http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"
                             ),
-                            "output_path": "/tmp/images/gnuplot-1f2e3d4c.png",
-                            "output_url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c.png?v=123-456",
+                            "output_path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
+                            "output_url": "http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
                         },
                     }
                 }
