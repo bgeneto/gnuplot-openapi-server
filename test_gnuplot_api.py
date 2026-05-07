@@ -211,6 +211,7 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert FakeGnuplot.instances[-1].operations[-1][0] == "plot"
     assert FakeGnuplot.instances[-1].commands[-1] == "unset output"
     assert FakeGnuplot.instances[-1].settings["grid"] == main.DEFAULT_GRID_STYLE
+    assert "dashtype" in FakeGnuplot.instances[-1].settings["grid"]
     assert f"set grid {main.DEFAULT_GRID_STYLE}" in FakeGnuplot.instances[-1].commands
 
 
