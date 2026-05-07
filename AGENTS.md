@@ -6,7 +6,7 @@ This file is for LLM and AI coding agents working in this repository. Treat it a
 
 `gnuplot-server` is a FastAPI/OpenAPI tool server for Open WebUI-style tool calling. It is not a native MCP server. It exposes structured HTTP endpoints under `/gnuplot` so an LLM can ask gnuplot to render plots and receive output metadata and URLs.
 
-The implementation lives mainly in `main.py` and wraps `py-gnuplot`, which in turn requires the native `gnuplot` executable at runtime. Generated files are written to `GNUPLOT_OUTPUT_DIR`, defaulting to `/tmp/images`, and served by FastAPI static files at `/outputs/{filename}`.
+The implementation lives mainly in `main.py` and wraps `py-gnuplot`, which in turn requires the native `gnuplot` executable at runtime. Generated outputs and temporary uploaded/inline data/script files are written to `GNUPLOT_OUTPUT_DIR`, defaulting to `/tmp/images`, and plot outputs are served at `/outputs/{filename}`.
 
 Critical product constraint: keep PNG output as the default. Open WebUI's markdown editor can render returned PNG URLs directly. If the caller omits `output` and `terminal`, the server should generate a unique `.png` file using `pngcairo`.
 
@@ -61,7 +61,7 @@ Do not remove Cairo/Pango packages just because `gnuplot-nox` may pull them tran
 
 Supported environment variables:
 
-- `GNUPLOT_OUTPUT_DIR`: directory for generated plots, inline data files, and inline script files. Defaults to `/tmp/images`.
+- `GNUPLOT_OUTPUT_DIR`: directory for generated plots, JSON-uploaded data files, inline data files, and inline script files. Defaults to `/tmp/images`.
 - `GNUPLOT_ALLOWED_ROOTS`: extra input-file roots separated by the OS path separator. On Linux this is `:`.
 - `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`: optional browser-facing static URL prefix for generated output files. Use this when Open WebUI calls the API through `http://gnuplot-server:8000` but the browser needs a public URL such as `https://host/plot-outputs/file.png`.
 
@@ -94,7 +94,7 @@ Most successful plotting responses include:
 
 - `success: true`
 - `operation`
-- endpoint-specific metadata such as `items`, `commands`, `data_file`, or `script_path`
+- endpoint-specific metadata such as `items`, `commands`, `data_file`, `data_source`, `uploaded_filename`, or `script_path`
 - `output.path`
 - `output.filename`
 - `output.url`
@@ -113,6 +113,15 @@ Endpoint aliases are intentional. Preserve them unless changing API compatibilit
 - `commands` may also accept `cmd` or `pre_commands`
 - `script_path` may also accept `script_file`, `file_path`, or `file`
 - `file_path` may also accept `file` or `path`
+- `uploaded_file` may also accept `upload` or `file_upload`
+
+For `/plot_file` and `/splot_file`, callers must provide exactly one data source:
+
+- `file_path` for an existing allowed server-side file.
+- `data` for raw inline text or row arrays written to a temporary `.dat` file.
+- `uploaded_file` for JSON-native file payloads with a safe filename plus either `content` text or `content_base64`.
+
+Uploaded data filenames must end with `.csv`, `.dat`, `.data`, `.txt`, `.tsv`, `.xy`, or `.xyz`. The server stores only the basename under `GNUPLOT_OUTPUT_DIR` with a unique prefix. `.csv` uploads infer `separator: ","` unless the caller supplies `separator` explicitly.
 
 ## PNG Default Rule
 
@@ -156,7 +165,7 @@ Path safety is also part of the security model:
 
 - never allow outputs outside `GNUPLOT_OUTPUT_DIR`,
 - never allow arbitrary file reads outside allowed roots,
-- keep inline data and inline script files written under `GNUPLOT_OUTPUT_DIR`.
+- keep uploaded data, inline data, and inline script files written under `GNUPLOT_OUTPUT_DIR`.
 
 ## Implementation Notes
 
@@ -195,7 +204,7 @@ PYTHONDONTWRITEBYTECODE=1 PYENV_VERSION=linkspix pyenv exec pytest -q -p no:cach
 Current expected result:
 
 ```text
-16 passed
+20 passed
 ```
 
 The tests mock `py-gnuplot` with `FakeGnuplot`. This is deliberate. API contract tests should not require the host machine to have native gnuplot installed. Use Docker builds, container smoke tests, or manual endpoint calls when you specifically need to verify real rendering.

@@ -6,16 +6,16 @@ The architecture splits responsibilities into two containers:
 - **gnuplot-server** (FastAPI): handles all API endpoints under `/gnuplot`
 - **nginx** (Nginx): serves generated static files from `/tmp/images` via `/outputs/{filename}`
 
-The server wraps `py-gnuplot`, writes generated files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/images`), and serves them back from `/outputs/{filename}` through the Nginx sidecar.
+The server wraps `py-gnuplot`, writes generated files and temporary data/script files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/images`), and serves plot outputs back from `/outputs/{filename}` through the Nginx sidecar.
 
 PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Omit `output` or use a `.png` filename to get the server's default high-resolution `pngcairo` terminal.
 
 ## What It Provides
 
 - 2D function plots with `/gnuplot/plot_function`
-- 2D file or inline-data plots with `/gnuplot/plot_file`
+- 2D file, uploaded-file, or inline-data plots with `/gnuplot/plot_file`
 - 3D function plots with `/gnuplot/splot_function`
-- 3D file or inline-data plots with `/gnuplot/splot_file`
+- 3D file, uploaded-file, or inline-data plots with `/gnuplot/splot_file`
 - Inline `plot_data()` and `splot_data()` requests
 - Multi-panel gnuplot images with `/gnuplot/multiplot`
 - Inline or file-based `.gnu`/`.gp` script execution
@@ -112,7 +112,7 @@ The included Docker setup runs:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GNUPLOT_OUTPUT_DIR` | `/tmp/images` | Directory where generated outputs and temporary inline data/scripts are written. |
+| `GNUPLOT_OUTPUT_DIR` | `/tmp/images` | Directory where generated outputs and temporary uploaded/inline data/scripts are written. |
 | `GNUPLOT_ALLOWED_ROOTS` | empty | Additional input-file roots, separated with the OS path separator (`:` on Linux). Existing data/script files must be under the current working directory, the output directory, or one of these extra roots. |
 | `GNUPLOT_PUBLIC_OUTPUT_BASE_URL` | empty | Optional browser-facing base URL for generated images. When set, `output.url` uses this value instead of the private Docker-network URL. |
 
@@ -181,9 +181,9 @@ Base path: `/gnuplot`
 | --- | --- | --- |
 | `GET` | `/gnuplot/health` | Report service version, output directory, `pygnuplot` import availability, and `gnuplot` executable path. |
 | `POST` | `/gnuplot/plot_function` | Plot one or more 2D gnuplot function/item clauses. |
-| `POST` | `/gnuplot/plot_file` | Plot 2D data from an existing allowed file or inline data written to a temporary file. |
+| `POST` | `/gnuplot/plot_file` | Plot 2D data from an existing allowed file, JSON-uploaded data file, or inline data written to a temporary file. |
 | `POST` | `/gnuplot/splot_function` | Plot one or more 3D function/item clauses. |
-| `POST` | `/gnuplot/splot_file` | Plot 3D data from an existing allowed file or inline data written to a temporary file. |
+| `POST` | `/gnuplot/splot_file` | Plot 3D data from an existing allowed file, JSON-uploaded data file, or inline data written to a temporary file. |
 | `POST` | `/gnuplot/plot_data` | Pass inline data directly to `py-gnuplot` `plot_data()`. |
 | `POST` | `/gnuplot/splot_data` | Pass inline data directly to `py-gnuplot` `splot_data()`. |
 | `POST` | `/gnuplot/multiplot` | Create a single output using gnuplot multiplot panels. |
@@ -208,6 +208,41 @@ Most plotting endpoints inherit these fields:
 | `allow_unsafe_commands` | Allows blocked shell-like gnuplot constructs. Use only for trusted input. |
 
 By default, the server blocks common shell escape forms such as backticks, leading `!`, `system(...)`, `popen(...)`, and user-supplied `load`/`call` script commands.
+
+## Data File Inputs
+
+`/gnuplot/plot_file` and `/gnuplot/splot_file` accept exactly one data source:
+
+| Field | Use case |
+| --- | --- |
+| `file_path`, `file`, or `path` | Plot an existing server-side file under the current working directory, `GNUPLOT_OUTPUT_DIR`, or `GNUPLOT_ALLOWED_ROOTS`. |
+| `data` | Send pasted or generated data directly as raw text or a list of rows. The server writes it to a temporary `.dat` file. |
+| `uploaded_file`, `upload`, or `file_upload` | Send a JSON-native file payload with a filename and text/base64 content. This is the best shape when an LLM has contents from an attached `.csv` or `.dat` file. |
+
+Uploaded file payloads look like this:
+
+```json
+{
+  "uploaded_file": {
+    "filename": "measurements.csv",
+    "content": "time,temp\n0,22.1\n1,22.8\n2,24.0\n",
+    "mime_type": "text/csv"
+  }
+}
+```
+
+For exact payload preservation, use `content_base64` instead of `content`:
+
+```json
+{
+  "upload": {
+    "filename": "points.dat",
+    "content_base64": "MCAwIDAKMSAxIDIK"
+  }
+}
+```
+
+Uploaded filenames must end with `.csv`, `.dat`, `.data`, `.txt`, `.tsv`, `.xy`, or `.xyz`. The server stores only the basename under `GNUPLOT_OUTPUT_DIR` with a unique prefix, so uploaded paths cannot escape the output directory. `.csv` uploads automatically set `set datafile separator ","` unless you pass `separator` explicitly.
 
 ## PNG Quality
 
@@ -274,6 +309,12 @@ time,temp
 5,23.7
 ```
 
+Uploaded/attached CSV file:
+
+```text
+Plot the attached CSV file as a PNG. Use column 1 for time and column 2 for temperature, add a grid, label the y-axis "Temperature C", and return the generated image URL in markdown.
+```
+
 Existing data file:
 
 ```text
@@ -337,6 +378,25 @@ curl -X POST http://localhost:8000/gnuplot/plot_file \
     "title": "x squared",
     "style": "with linespoints",
     "settings": {"grid": "", "xlabel": "\"x\"", "ylabel": "\"y\""}
+  }'
+```
+
+Plot a JSON-uploaded CSV file:
+
+```bash
+curl -X POST http://localhost:8000/gnuplot/plot_file \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "output": "uploaded-temperature.png",
+    "uploaded_file": {
+      "filename": "temperature.csv",
+      "content": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n",
+      "mime_type": "text/csv"
+    },
+    "using": "1:2",
+    "title": "Temperature",
+    "style": "with linespoints",
+    "settings": {"grid": "", "xlabel": "\"time\"", "ylabel": "\"Temperature C\""}
   }'
 ```
 

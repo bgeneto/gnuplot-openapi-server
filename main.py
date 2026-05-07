@@ -14,6 +14,7 @@ Version: 1.0.0
 from __future__ import annotations
 
 import base64
+import binascii
 import importlib.util
 import logging
 import mimetypes
@@ -32,7 +33,14 @@ from urllib.parse import quote
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +57,17 @@ DEFAULT_IMAGE_WIDTH = 1600
 DEFAULT_IMAGE_HEIGHT = 1000
 DEFAULT_PNG_FONT = "DejaVu Sans"
 DEFAULT_PNG_FONT_SIZE = 14
+MAX_UPLOADED_DATA_FILE_BYTES = 5 * 1024 * 1024
+MAX_UPLOADED_DATA_FILE_BASE64_CHARS = 7 * 1024 * 1024
+ALLOWED_UPLOADED_DATA_SUFFIXES = {
+    ".csv",
+    ".dat",
+    ".data",
+    ".txt",
+    ".tsv",
+    ".xy",
+    ".xyz",
+}
 DEFAULT_PNG_TERMINAL = (
     f'pngcairo enhanced font "{DEFAULT_PNG_FONT},{DEFAULT_PNG_FONT_SIZE}" '
     f"size {DEFAULT_IMAGE_WIDTH},{DEFAULT_IMAGE_HEIGHT}"
@@ -64,7 +83,8 @@ app = FastAPI(
     version="1.0.0",
     description=(
         "OpenAPI tool server for creating gnuplot charts. Use /gnuplot/plot_function "
-        "for 2D formulas, /gnuplot/plot_file for existing files or inline table data, "
+        "for 2D formulas, /gnuplot/plot_file for existing files, uploaded data "
+        "files, or inline table data, "
         "/gnuplot/splot_function and /gnuplot/splot_file for 3D plots, /gnuplot/multiplot "
         "for multi-panel figures, and /gnuplot/run_script or /gnuplot/run_commands only "
         "when the user asks for script/command-level control. For Open WebUI markdown, "
@@ -437,9 +457,81 @@ class SplotFunctionInput(PlotItemsInput):
     """Input model for 3D function plots."""
 
 
+class UploadedDataFile(BaseModel):
+    """
+    JSON-native uploaded data file for OpenAPI tool callers.
+
+    OpenAPI LLM tools usually cannot send multipart form data reliably, so this
+    model lets a caller provide a named text data file inside the JSON request.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    filename: str = Field(
+        ...,
+        description=(
+            "Original data filename. The server keeps only the basename, requires a "
+            ".csv/.dat/.data/.txt/.tsv/.xy/.xyz suffix, and stores it under "
+            "GNUPLOT_OUTPUT_DIR with a unique prefix."
+        ),
+        min_length=1,
+        max_length=120,
+        examples=["measurements.csv", "series.dat"],
+    )
+    content: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("content", "text", "data"),
+        description=(
+            "UTF-8 text content of the uploaded data file. Use this for pasted CSV, "
+            "DAT, TSV, XY, or XYZ data."
+        ),
+        max_length=MAX_UPLOADED_DATA_FILE_BYTES,
+        examples=["time,temp\n0,22.1\n1,22.8\n2,24.0\n"],
+    )
+    content_base64: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("content_base64", "base64"),
+        description=(
+            "Base64-encoded data file bytes. Use this when preserving the exact file "
+            "payload is easier than sending escaped JSON text."
+        ),
+        max_length=MAX_UPLOADED_DATA_FILE_BASE64_CHARS,
+    )
+    encoding: str = Field(
+        "utf-8",
+        description="Text encoding used for content or to validate base64 bytes.",
+        max_length=40,
+        examples=["utf-8"],
+    )
+    mime_type: Optional[str] = Field(
+        None,
+        description="Optional source MIME type for documentation/debugging only.",
+        max_length=120,
+        examples=["text/csv"],
+    )
+
+    @field_validator("filename", "encoding", "mime_type")
+    @classmethod
+    def validate_uploaded_file_optional_text(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("Uploaded file text fields cannot be empty")
+        return value
+
+    @model_validator(mode="after")
+    def validate_uploaded_file_payload(self):
+        has_content = self.content is not None
+        has_base64 = self.content_base64 is not None
+        if has_content == has_base64:
+            raise ValueError(
+                "Provide exactly one of uploaded_file.content or "
+                "uploaded_file.content_base64"
+            )
+        return self
+
+
 class FilePlotInput(GnuplotBaseInput):
     """
-    Input model for plotting data from a file or inline data written to a file.
+    Input model for plotting data from a file, uploaded file, or inline data.
 
     If `items` is omitted, the server builds one plot clause from file_path/data,
     using, title, and style. If `items` is provided, `{file}` placeholders are
@@ -464,6 +556,15 @@ class FilePlotInput(GnuplotBaseInput):
             "a small table that should be plotted with ordinary file-based gnuplot syntax."
         ),
         examples=[[[0, 0], [1, 1], [2, 4], [3, 9]]],
+    )
+    uploaded_file: Optional[UploadedDataFile] = Field(
+        None,
+        validation_alias=AliasChoices("uploaded_file", "upload", "file_upload"),
+        description=(
+            "JSON-native uploaded .csv/.dat/.data/.txt/.tsv/.xy/.xyz file. Use this "
+            "when an LLM has file contents from an attachment and should plot the "
+            "file as a real gnuplot data file."
+        ),
     )
     data_filename: Optional[str] = Field(
         None,
@@ -1065,6 +1166,76 @@ class GnuplotTool:
             raise ValueError("Inline data rows cannot be empty")
         return "\n".join(rows) + "\n"
 
+    def _safe_uploaded_data_filename(self, filename: str) -> str:
+        """Return a safe data filename basename for uploaded file content."""
+        name = Path(filename.replace("\\", "/")).name.strip()
+        if not name or name in {".", ".."}:
+            raise ValueError("Uploaded data filename is invalid")
+        if any(ord(char) < 32 for char in name):
+            raise ValueError("Uploaded data filename contains control characters")
+
+        suffix = Path(name).suffix.lower()
+        if suffix not in ALLOWED_UPLOADED_DATA_SUFFIXES:
+            allowed = ", ".join(sorted(ALLOWED_UPLOADED_DATA_SUFFIXES))
+            raise ValueError(f"Uploaded data filename must end with one of: {allowed}")
+
+        return name
+
+    def _uploaded_data_to_bytes(self, uploaded_file: UploadedDataFile) -> bytes:
+        """Decode uploaded text/base64 file content and validate that it is text data."""
+        encoding = uploaded_file.encoding.strip()
+        if uploaded_file.content is not None:
+            if not uploaded_file.content.strip():
+                raise ValueError("Uploaded data file cannot be empty")
+            try:
+                payload = uploaded_file.content.encode(encoding)
+            except LookupError as exc:
+                raise ValueError(f"Unknown uploaded data encoding: {encoding}") from exc
+        else:
+            try:
+                payload = base64.b64decode(
+                    uploaded_file.content_base64 or "", validate=True
+                )
+            except binascii.Error as exc:
+                raise ValueError("Uploaded data file base64 content is invalid") from exc
+
+            if not payload.strip():
+                raise ValueError("Uploaded data file cannot be empty")
+            try:
+                payload.decode(encoding)
+            except LookupError as exc:
+                raise ValueError(f"Unknown uploaded data encoding: {encoding}") from exc
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"Uploaded data file is not valid {encoding} text"
+                ) from exc
+
+        if len(payload) > MAX_UPLOADED_DATA_FILE_BYTES:
+            raise ValueError(
+                f"Uploaded data file is too large; maximum is {MAX_UPLOADED_DATA_FILE_BYTES} bytes"
+            )
+        if not payload.endswith(b"\n"):
+            payload += b"\n"
+        return payload
+
+    def _write_uploaded_data_file(self, uploaded_file: UploadedDataFile) -> Path:
+        """Write a JSON-uploaded data file under the output directory."""
+        safe_name = self._safe_uploaded_data_filename(uploaded_file.filename)
+        target = self.output_dir / f"gnuplot-upload-{uuid.uuid4().hex}-{safe_name}"
+        target = self._ensure_allowed_path(target, [self.output_dir], "Uploaded data")
+        target.write_bytes(self._uploaded_data_to_bytes(uploaded_file))
+        return target
+
+    def _datafile_separator_for_path(
+        self, data_file: Path, requested_separator: Optional[str]
+    ) -> Optional[str]:
+        """Choose an explicit or filename-inferred datafile separator."""
+        if requested_separator is not None:
+            return requested_separator
+        if data_file.suffix.lower() == ".csv":
+            return ","
+        return None
+
     def _write_inline_data(
         self, data: str | DataRows, data_filename: Optional[str] = None
     ) -> Path:
@@ -1279,15 +1450,36 @@ class GnuplotTool:
         request: Request,
         plot_kind: Literal["plot", "splot"],
     ) -> dict[str, Any]:
-        """Render a plot or splot from an existing data file or inline data."""
+        """Render a plot or splot from an existing, uploaded, or inline data file."""
         operation = f"{plot_kind}_file"
         try:
+            data_sources = [
+                data.file_path is not None,
+                data.data is not None,
+                data.uploaded_file is not None,
+            ]
+            if sum(data_sources) != 1:
+                raise ValueError(
+                    "Provide exactly one of file_path, inline data, or uploaded_file"
+                )
+
+            data_source = "inline_data"
+            uploaded_filename = None
             if data.data is not None:
                 data_file = self._write_inline_data(data.data, data.data_filename)
+            elif data.uploaded_file is not None:
+                data_file = self._write_uploaded_data_file(data.uploaded_file)
+                data_source = "uploaded_file"
+                uploaded_filename = self._safe_uploaded_data_filename(
+                    data.uploaded_file.filename
+                )
             elif data.file_path:
                 data_file = self._resolve_input_file(data.file_path)
+                data_source = "file_path"
             else:
-                raise ValueError("Provide either file_path or inline data")
+                raise ValueError(
+                    "Provide exactly one of file_path, inline data, or uploaded_file"
+                )
 
             output_path = self._resolve_output_file(
                 data.output, self._extension_from_terminal(data.terminal)
@@ -1299,8 +1491,9 @@ class GnuplotTool:
                 data.width,
                 data.height,
             )
-            if data.separator:
-                settings["datafile"] = f"separator {self._quote_title(data.separator)}"
+            separator = self._datafile_separator_for_path(data_file, data.separator)
+            if separator:
+                settings["datafile"] = f"separator {self._quote_title(separator)}"
 
             default_using = "1:2:3" if plot_kind == "splot" else "1:2"
             items = self._build_file_items(
@@ -1337,6 +1530,8 @@ class GnuplotTool:
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
                 data_file=str(data_file),
+                data_source=data_source,
+                uploaded_filename=uploaded_filename,
                 items=items,
                 commands=commands,
             )
@@ -1749,11 +1944,12 @@ async def gnuplot_plot_function(
     "/plot_file",
     response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
-    summary="Plot 2D data from a file or inline data",
+    summary="Plot 2D data from a file, upload, or inline data",
     description=(
         "Use this endpoint when the user provides an existing data file, pasted rows, "
-        "CSV-like data, or an LLM-generated table that should be plotted as 2D data. "
-        "Inline data is written to a safe temporary file before plotting."
+        "CSV-like data, an attached/uploaded .csv or .dat file, or an LLM-generated "
+        "table that should be plotted as 2D data. Inline and uploaded data are "
+        "written to safe temporary files before plotting."
     ),
     operation_id="gnuplot_plot_file",
     responses=COMMON_ERROR_RESPONSES,
@@ -1780,6 +1976,25 @@ async def gnuplot_plot_file(
                     "output": "temperature.png",
                     "data": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n4,24.9",
                     "separator": ",",
+                    "using": "1:2",
+                    "title": "Temperature",
+                    "style": "with linespoints",
+                    "settings": {
+                        "grid": "",
+                        "xlabel": '"time"',
+                        "ylabel": '"Temperature C"',
+                    },
+                },
+            },
+            "uploaded_csv_file": {
+                "summary": "Plot a JSON-uploaded CSV file",
+                "value": {
+                    "output": "uploaded-temperature.png",
+                    "uploaded_file": {
+                        "filename": "temperature.csv",
+                        "content": "time,temp\n0,22.1\n1,22.8\n2,24.0\n3,25.4\n",
+                        "mime_type": "text/csv",
+                    },
                     "using": "1:2",
                     "title": "Temperature",
                     "style": "with linespoints",
@@ -1860,10 +2075,11 @@ async def gnuplot_splot_function(
     "/splot_file",
     response_model=GnuplotSuccessResponse,
     response_model_exclude_none=True,
-    summary="Plot 3D data from a file or inline data",
+    summary="Plot 3D data from a file, upload, or inline data",
     description=(
-        "Use this endpoint when the user provides XYZ rows, an XYZ data file, or "
-        "LLM-generated 3D points that should be rendered with gnuplot splot."
+        "Use this endpoint when the user provides XYZ rows, an uploaded/existing XYZ "
+        "data file, or LLM-generated 3D points that should be rendered with gnuplot "
+        "splot."
     ),
     operation_id="gnuplot_splot_file",
     responses=COMMON_ERROR_RESPONSES,
@@ -1878,6 +2094,20 @@ async def gnuplot_splot_file(
                 "value": {
                     "output": "xyz-surface.png",
                     "data": [[0, 0, 0], [0, 1, 1], [1, 0, 1], [1, 1, 2]],
+                    "using": "1:2:3",
+                    "title": "z = x + y",
+                    "style": "with points pointtype 7",
+                    "settings": {"grid": "", "view": "60, 35"},
+                },
+            },
+            "uploaded_xyz_file": {
+                "summary": "Plot a JSON-uploaded XYZ data file",
+                "value": {
+                    "output": "uploaded-xyz.png",
+                    "upload": {
+                        "filename": "points.dat",
+                        "content": "0 0 0\n0 1 1\n1 0 1\n1 1 2\n",
+                    },
                     "using": "1:2:3",
                     "title": "z = x + y",
                     "style": "with points pointtype 7",

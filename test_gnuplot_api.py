@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -270,6 +271,62 @@ async def test_plot_file_writes_inline_data_and_replaces_file_placeholder():
     assert Path(body["data_file"]).read_text(encoding="utf-8") == "0 0\n1 1\n2 4\n"
     assert "{file}" not in body["items"][0]
     assert "series.dat" in body["items"][0]
+
+
+@pytest.mark.asyncio
+async def test_plot_file_accepts_uploaded_csv_text_and_infers_separator():
+    csv_content = "time,temp\n0,22.1\n1,22.8\n2,24.0\n"
+
+    response = await post_json(
+        "/gnuplot/plot_file",
+        {
+            "output": "uploaded-csv.png",
+            "uploaded_file": {
+                "filename": "measurements.csv",
+                "content": csv_content,
+                "mime_type": "text/csv",
+            },
+            "using": "1:2",
+            "title": "Temperature",
+            "style": "with linespoints",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    data_file = Path(body["data_file"])
+    assert body["operation"] == "plot_file"
+    assert body["data_source"] == "uploaded_file"
+    assert body["uploaded_filename"] == "measurements.csv"
+    assert data_file.name.endswith("-measurements.csv")
+    assert data_file.read_text(encoding="utf-8") == csv_content
+    assert FakeGnuplot.instances[-1].settings["datafile"] == 'separator ","'
+
+
+@pytest.mark.asyncio
+async def test_splot_file_accepts_uploaded_base64_dat_file():
+    dat_content = b"0 0 0\n1 1 2\n"
+
+    response = await post_json(
+        "/gnuplot/splot_file",
+        {
+            "output": "uploaded-dat.png",
+            "upload": {
+                "filename": "points.dat",
+                "content_base64": base64.b64encode(dat_content).decode("ascii"),
+            },
+            "using": "1:2:3",
+            "style": "with points",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    data_file = Path(body["data_file"])
+    assert body["operation"] == "splot_file"
+    assert body["data_source"] == "uploaded_file"
+    assert data_file.name.endswith("-points.dat")
+    assert data_file.read_bytes() == dat_content
 
 
 @pytest.mark.asyncio
