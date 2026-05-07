@@ -139,7 +139,7 @@ When `output` is supplied with a `.png` suffix and no explicit terminal:
 
 Only produce SVG, PDF, GIF, JPG, text, or other output types when the caller explicitly requests them through `output` extension or `terminal`.
 
-For `/gnuplot/plot_function`, default to `set samples 3000` unless the caller already supplied `settings.samples`. Apply the same default for 2D `/gnuplot/multiplot` requests through the top-level settings path when no explicit `samples` value is present. Do not apply `3000` to 3D `splot` defaults; `isosamples` is the relevant 3D control and needs a much smaller, deliberate value.
+For `/gnuplot/plot_function`, default to `set samples 2000` unless the caller already supplied `settings.samples`. Apply the same default for 2D `/gnuplot/multiplot` requests through the top-level settings path when no explicit `samples` value is present. Do not apply `2000` to 3D `splot` defaults; `isosamples` is the relevant 3D control and needs a much smaller, deliberate value.
 
 When callers send `settings.grid` as an empty string, normalize it to a more visible default grid clause instead of plain `set grid`. Preserve any explicit non-empty `grid` clause exactly as provided.
 

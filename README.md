@@ -199,7 +199,7 @@ Most plotting endpoints inherit these fields:
 | `output` | Optional output filename. Relative names are written under `GNUPLOT_OUTPUT_DIR`; omitted outputs get a unique `.png` filename. |
 | `terminal` or `term` | Optional gnuplot terminal string. If omitted, the server chooses one from the output extension. For Open WebUI, prefer the default high-resolution `pngcairo` behavior. |
 | `width`, `height` | Default image size used by generated terminal settings. Defaults to `1600` by `1000` for PNG output. |
-| `settings` | Mapping of gnuplot `set` options. Example: `{"grid": "", "title": "\"Demo\""}`. For `/gnuplot/plot_function` and 2D `/gnuplot/multiplot` panels, the server defaults to `samples=3000` unless you set `samples` yourself. If you send `grid` as an empty string, the server enables a more visible default grid style; send an explicit grid clause to override it. |
+| `settings` | Mapping of gnuplot `set` options. Example: `{"grid": "", "title": "\"Demo\""}`. For `/gnuplot/plot_function` and 2D `/gnuplot/multiplot` panels, the server defaults to `samples=2000` unless you set `samples` yourself. If you send `grid` as an empty string, the server enables a more visible default grid style; send an explicit grid clause to override it. |
 | `unset` | List of gnuplot options to unset before plotting. |
 | `commands`, `cmd`, or `pre_commands` | Commands to run before the plot operation. |
 | `post_commands` | Commands to run after the plot operation. |
@@ -270,15 +270,15 @@ Use SVG or PDF only when the caller explicitly wants a vector format.
 
 ## 2D Function Sampling
 
-For `/gnuplot/plot_function`, the server now applies `set samples 3000` by default when the request does not already include `settings.samples`. This improves curve smoothness for typical LLM-generated function plots without taking control away from the caller.
+For `/gnuplot/plot_function`, the server now applies `set samples 2000` by default when the request does not already include `settings.samples`. This improves curve smoothness for typical LLM-generated function plots without taking control away from the caller.
 
 The same default also applies to 2D panels in `/gnuplot/multiplot` through the request-level settings path. If you want another value, keep sending it explicitly in `settings` and it will win over the default.
 
-This is intentionally limited to 2D function-style plots. For 3D `splot` requests, the comparable density control is usually `isosamples`, and forcing that to `3000` would be too expensive.
+This is intentionally limited to 2D function-style plots. For 3D `splot` requests, the comparable density control is usually `isosamples`, and forcing that to `2000` would be too expensive.
 
 ## Grid Visibility
 
-If a request uses `"settings": {"grid": ""}`, the server now expands that into a darker front-layer grid style instead of bare `set grid`. That keeps the common LLM payload short while making the grid easier to see in generated PNGs after browser downscaling.
+If a request uses `"settings": {"grid": ""}`, the server now expands that into `front lt 1 lc rgb "#5f6b73" lw 1.5` instead of bare `set grid`. That keeps the common LLM payload short while making the grid easier to see in generated PNGs after browser downscaling.
 
 If you want full control, pass your own `grid` clause, for example `back lc rgb "#808080" lw 2`, and the server will use it as-is.
 

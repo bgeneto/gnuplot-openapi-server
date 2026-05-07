@@ -36,6 +36,9 @@ class FakeGnuplot:
             self.output_dirty = False
             return
 
+        for command in commands:
+            self._apply_command_to_settings(command)
+
         if any(
             "plot" in command or command.startswith("load ") for command in commands
         ):
@@ -69,11 +72,27 @@ class FakeGnuplot:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(self.output_bytes)
 
+    def _apply_command_to_settings(self, command: str):
+        stripped = command.strip()
+        if stripped.startswith("set "):
+            body = stripped.removeprefix("set ").strip()
+            key, _, value = body.partition(" ")
+            self.settings[key] = _parse_gnuplot_setting_value(value)
+        elif stripped.startswith("unset "):
+            key = stripped.removeprefix("unset ").strip()
+            self.settings.pop(key, None)
+
 
 def _unquote_gnuplot_string(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] == '"':
         value = value[1:-1]
     return value.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def _parse_gnuplot_setting_value(value: str):
+    if value.lstrip("-").isdigit():
+        return int(value)
+    return value
 
 
 @pytest.fixture(autouse=True)
@@ -192,6 +211,7 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert FakeGnuplot.instances[-1].operations[-1][0] == "plot"
     assert FakeGnuplot.instances[-1].commands[-1] == "unset output"
     assert FakeGnuplot.instances[-1].settings["grid"] == main.DEFAULT_GRID_STYLE
+    assert f"set grid {main.DEFAULT_GRID_STYLE}" in FakeGnuplot.instances[-1].commands
 
 
 @pytest.mark.asyncio
@@ -255,7 +275,8 @@ async def test_plot_function_defaults_to_png_for_open_webui_markdown():
     assert body["terminal"].startswith("pngcairo")
     assert 'font "DejaVu Sans,18"' in body["terminal"]
     assert "size 1600,1000" in body["terminal"]
-    assert FakeGnuplot.instances[-1].settings["samples"] == 3000
+    assert FakeGnuplot.instances[-1].settings["samples"] == 2000
+    assert "set samples 2000" in FakeGnuplot.instances[-1].commands
 
 
 @pytest.mark.asyncio
@@ -272,6 +293,7 @@ async def test_plot_function_allows_explicit_samples_override():
     assert response.json()["settings"]["samples"] == 1200
     assert "terminal" not in response.json()["settings"]
     assert FakeGnuplot.instances[-1].settings["samples"] == 1200
+    assert "set samples 1200" in FakeGnuplot.instances[-1].commands
 
 
 @pytest.mark.asyncio
@@ -454,8 +476,9 @@ async def test_multiplot_defaults_samples_for_2d_plot_panels():
     )
 
     assert response.status_code == 200
-    assert response.json()["settings"]["samples"] == 3000
-    assert FakeGnuplot.instances[-1].settings["samples"] == 3000
+    assert response.json()["settings"]["samples"] == 2000
+    assert FakeGnuplot.instances[-1].settings["samples"] == 2000
+    assert "set samples 2000" in FakeGnuplot.instances[-1].commands
 
 
 @pytest.mark.asyncio

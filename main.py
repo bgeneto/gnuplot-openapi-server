@@ -55,8 +55,8 @@ DEFAULT_IMAGE_WIDTH = 1600
 DEFAULT_IMAGE_HEIGHT = 1000
 DEFAULT_PNG_FONT = "DejaVu Sans"
 DEFAULT_PNG_FONT_SIZE = 18
-DEFAULT_2D_FUNCTION_SAMPLES = 3000
-DEFAULT_GRID_STYLE = 'front lc rgb "#7f8c8d" lw 2.0'
+DEFAULT_2D_FUNCTION_SAMPLES = 2000
+DEFAULT_GRID_STYLE = 'front lt 1 lc rgb "#5f6b73" lw 1.5'
 MAX_UPLOADED_DATA_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADED_DATA_FILE_BASE64_CHARS = 7 * 1024 * 1024
 ALLOWED_UPLOADED_DATA_SUFFIXES = {
@@ -333,7 +333,7 @@ class GnuplotBaseInput(BaseModel):
             "{'title': '\"Simple Plots\"', 'xrange': '[-10:10]', 'grid': ''}. "
             "Use quoted strings inside values when gnuplot expects a string. "
             "For 2D function plots and 2D multiplot panels, the server defaults "
-            "to samples=3000 unless you set samples explicitly. If you send "
+            "to samples=2000 unless you set samples explicitly. If you send "
             "grid as an empty string, the server applies a more visible default "
             "grid style."
         ),
@@ -1102,6 +1102,32 @@ class GnuplotTool:
             if key not in {"output", "terminal", "term"}
         }
 
+    def _setting_command(self, key: str, value: GnuplotScalar) -> str:
+        """Build one explicit gnuplot set/unset command."""
+        if value is None:
+            return f"unset {key}"
+        if isinstance(value, bool):
+            return f"set {key}" if value else f"unset {key}"
+
+        text = str(value)
+        if text == "":
+            return f"set {key}"
+        return f"set {key} {text}"
+
+    def _setting_commands(
+        self, settings: dict[str, GnuplotOptionValue]
+    ) -> list[str]:
+        """Build explicit gnuplot commands from normalized settings."""
+        commands = []
+        for key, value in settings.items():
+            if isinstance(value, list):
+                commands.extend(
+                    self._setting_command(key, item) for item in value
+                )
+            else:
+                commands.append(self._setting_command(key, value))
+        return commands
+
     def _apply_context_setup(
         self,
         g: Any,
@@ -1112,7 +1138,11 @@ class GnuplotTool:
     ) -> list[str]:
         """Apply set/unset/cmd setup and return validated command log."""
         if settings:
-            g.set(**settings)
+            setting_commands = [
+                self._validate_gnuplot_text(command, "gnuplot setting", allow_unsafe)
+                for command in self._setting_commands(settings)
+            ]
+            g.cmd(*setting_commands)
 
         if unset_items:
             g.unset(*unset_items)
@@ -1892,7 +1922,7 @@ async def gnuplot_health():
         "Use this endpoint when the user asks to plot 2D mathematical functions or "
         "expressions such as sin(x), polynomials, exponentials, or comparisons across "
         "one x-axis. Prefer PNG output for Open WebUI; omit output or choose a .png "
-        "filename. When settings.samples is omitted, the server uses samples=3000 "
+        "filename. When settings.samples is omitted, the server uses samples=2000 "
         "for smoother 2D curves."
     ),
     operation_id="gnuplot_plot_function",
@@ -2273,7 +2303,7 @@ async def gnuplot_splot_data(
         "Use this endpoint when the user asks for multiple panels in one generated "
         "figure, such as comparing related functions above and below each other. "
         "Top-level settings apply before the panels render. When a 2D plot panel "
-        "does not set samples, the server defaults to samples=3000 unless the "
+        "does not set samples, the server defaults to samples=2000 unless the "
         "request already provided one."
     ),
     operation_id="gnuplot_multiplot",
