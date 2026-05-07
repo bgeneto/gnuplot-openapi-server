@@ -10,7 +10,7 @@ services:
     #  - 8000:8000
     volumes:
       - ./main.py:/app/main.py:ro
-      - /opt/docker/caddy/served_files/images:/tmp/images
+      - /opt/docker/caddy/static/images:/tmp/images
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     environment:
