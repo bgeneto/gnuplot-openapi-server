@@ -48,9 +48,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gnuplot-tool")
 
-DEFAULT_OUTPUT_DIR = Path(
-    os.getenv("GNUPLOT_OUTPUT_DIR", "/tmp/images")
-).resolve()
+DEFAULT_OUTPUT_DIR = Path(os.getenv("GNUPLOT_OUTPUT_DIR", "/tmp/images")).resolve()
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PUBLIC_BASE_URL_ENV = "GNUPLOT_PUBLIC_OUTPUT_BASE_URL"
 DEFAULT_IMAGE_WIDTH = 1600
@@ -1210,7 +1208,9 @@ class GnuplotTool:
                     uploaded_file.content_base64 or "", validate=True
                 )
             except binascii.Error as exc:
-                raise ValueError("Uploaded data file base64 content is invalid") from exc
+                raise ValueError(
+                    "Uploaded data file base64 content is invalid"
+                ) from exc
 
             if not payload.strip():
                 raise ValueError("Uploaded data file cannot be empty")
@@ -1454,6 +1454,7 @@ class GnuplotTool:
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
+                settings=settings,
                 items=items,
                 commands=commands,
             )
@@ -1545,6 +1546,7 @@ class GnuplotTool:
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
+                settings=settings,
                 data_file=str(data_file),
                 data_source=data_source,
                 uploaded_filename=uploaded_filename,
@@ -1602,6 +1604,7 @@ class GnuplotTool:
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
+                settings=settings,
                 items=items,
                 commands=commands,
             )
@@ -1685,6 +1688,7 @@ class GnuplotTool:
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
+                settings=settings,
                 layout=data.layout,
                 panels=panel_metadata,
                 commands=commands,
@@ -1746,6 +1750,7 @@ class GnuplotTool:
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
+                settings=settings,
                 script_path=str(script_path),
                 commands=commands,
             )
@@ -1794,6 +1799,7 @@ class GnuplotTool:
                     request,
                     data.include_image_base64,
                     terminal=str(settings.get("terminal") or settings.get("term")),
+                    settings=settings,
                     commands=commands,
                     setup_commands=setup_commands,
                 )
@@ -1808,6 +1814,7 @@ class GnuplotTool:
                 "success": True,
                 "operation": operation,
                 "terminal": str(settings.get("terminal") or settings.get("term")),
+                "settings": settings,
                 "commands": commands,
                 "setup_commands": setup_commands,
                 "output": output_info,
@@ -2136,7 +2143,7 @@ async def gnuplot_splot_file(
                     "style": "with points pointtype 7",
                     "settings": {"grid": "", "view": "60, 35"},
                 },
-            }
+            },
         },
     ),
 ):
