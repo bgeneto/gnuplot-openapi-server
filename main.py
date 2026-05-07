@@ -56,7 +56,7 @@ DEFAULT_IMAGE_HEIGHT = 1000
 DEFAULT_PNG_FONT = "DejaVu Sans"
 DEFAULT_PNG_FONT_SIZE = 18
 DEFAULT_2D_FUNCTION_SAMPLES = 3000
-DEFAULT_GRID_STYLE = 'back lc rgb "#b8c2cc" lw 1'
+DEFAULT_GRID_STYLE = 'front lc rgb "#7f8c8d" lw 1.5'
 MAX_UPLOADED_DATA_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADED_DATA_FILE_BASE64_CHARS = 7 * 1024 * 1024
 ALLOWED_UPLOADED_DATA_SUFFIXES = {
@@ -1092,6 +1092,16 @@ class GnuplotTool:
 
         return normalized
 
+    def _response_settings(
+        self, settings: dict[str, GnuplotOptionValue]
+    ) -> dict[str, GnuplotOptionValue]:
+        """Return normalized settings safe to expose in API responses."""
+        return {
+            key: value
+            for key, value in settings.items()
+            if key not in {"output", "terminal", "term"}
+        }
+
     def _apply_context_setup(
         self,
         g: Any,
@@ -1448,13 +1458,14 @@ class GnuplotTool:
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
+            response_settings = self._response_settings(settings)
             return self._success_response(
                 operation,
                 output_path,
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
-                settings=settings,
+                settings=response_settings,
                 items=items,
                 commands=commands,
             )
@@ -1540,13 +1551,14 @@ class GnuplotTool:
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
+            response_settings = self._response_settings(settings)
             return self._success_response(
                 operation,
                 output_path,
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
-                settings=settings,
+                settings=response_settings,
                 data_file=str(data_file),
                 data_source=data_source,
                 uploaded_filename=uploaded_filename,
@@ -1598,13 +1610,14 @@ class GnuplotTool:
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
+            response_settings = self._response_settings(settings)
             return self._success_response(
                 operation,
                 output_path,
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
-                settings=settings,
+                settings=response_settings,
                 items=items,
                 commands=commands,
             )
@@ -1682,13 +1695,14 @@ class GnuplotTool:
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
+            response_settings = self._response_settings(settings)
             return self._success_response(
                 operation,
                 output_path,
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
-                settings=settings,
+                settings=response_settings,
                 layout=data.layout,
                 panels=panel_metadata,
                 commands=commands,
@@ -1744,13 +1758,14 @@ class GnuplotTool:
                 return commands
 
             commands = self._safe_computation(run, timeout=data.timeout)
+            response_settings = self._response_settings(settings)
             return self._success_response(
                 operation,
                 output_path,
                 request,
                 data.include_image_base64,
                 terminal=str(settings.get("terminal") or settings.get("term")),
-                settings=settings,
+                settings=response_settings,
                 script_path=str(script_path),
                 commands=commands,
             )
@@ -1792,6 +1807,7 @@ class GnuplotTool:
                 return setup_commands
 
             setup_commands = self._safe_computation(run, timeout=data.timeout)
+            response_settings = self._response_settings(settings)
             if data.expect_output:
                 return self._success_response(
                     operation,
@@ -1799,7 +1815,7 @@ class GnuplotTool:
                     request,
                     data.include_image_base64,
                     terminal=str(settings.get("terminal") or settings.get("term")),
-                    settings=settings,
+                    settings=response_settings,
                     commands=commands,
                     setup_commands=setup_commands,
                 )
@@ -1814,7 +1830,7 @@ class GnuplotTool:
                 "success": True,
                 "operation": operation,
                 "terminal": str(settings.get("terminal") or settings.get("term")),
-                "settings": settings,
+                "settings": response_settings,
                 "commands": commands,
                 "setup_commands": setup_commands,
                 "output": output_info,

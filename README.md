@@ -278,7 +278,7 @@ This is intentionally limited to 2D function-style plots. For 3D `splot` request
 
 ## Grid Visibility
 
-If a request uses `"settings": {"grid": ""}`, the server now expands that into a clearer default grid style instead of bare `set grid`. That keeps the common LLM payload short while making the grid easier to see in generated PNGs.
+If a request uses `"settings": {"grid": ""}`, the server now expands that into a darker front-layer grid style instead of bare `set grid`. That keeps the common LLM payload short while making the grid easier to see in generated PNGs after browser downscaling.
 
 If you want full control, pass your own `grid` clause, for example `back lc rgb "#808080" lw 2`, and the server will use it as-is.
 

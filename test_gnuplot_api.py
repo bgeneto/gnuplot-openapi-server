@@ -187,6 +187,8 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert body["output"]["data_uri"].startswith("data:image/png;base64,")
     assert Path(body["output"]["path"]).exists()
     assert body["settings"]["grid"] == main.DEFAULT_GRID_STYLE
+    assert "terminal" not in body["settings"]
+    assert "output" not in body["settings"]
     assert FakeGnuplot.instances[-1].operations[-1][0] == "plot"
     assert FakeGnuplot.instances[-1].commands[-1] == "unset output"
     assert FakeGnuplot.instances[-1].settings["grid"] == main.DEFAULT_GRID_STYLE
@@ -268,6 +270,7 @@ async def test_plot_function_allows_explicit_samples_override():
 
     assert response.status_code == 200
     assert response.json()["settings"]["samples"] == 1200
+    assert "terminal" not in response.json()["settings"]
     assert FakeGnuplot.instances[-1].settings["samples"] == 1200
 
 
