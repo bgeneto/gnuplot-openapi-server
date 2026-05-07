@@ -249,7 +249,7 @@ Uploaded filenames must end with `.csv`, `.dat`, `.data`, `.txt`, `.tsv`, `.xy`,
 The default PNG terminal is:
 
 ```text
-pngcairo enhanced font "DejaVu Sans,14" size 1600,1000
+pngcairo enhanced font "DejaVu Sans,16" size 1600,1000
 ```
 
 This intentionally renders more pixels than a typical chat pane displays, so

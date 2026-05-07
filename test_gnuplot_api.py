@@ -247,7 +247,7 @@ async def test_plot_function_defaults_to_png_for_open_webui_markdown():
     assert body["output"]["url"].endswith(".png")
     assert body["output"]["mime_type"] == "image/png"
     assert body["terminal"].startswith("pngcairo")
-    assert 'font "DejaVu Sans,14"' in body["terminal"]
+    assert 'font "DejaVu Sans,16"' in body["terminal"]
     assert "size 1600,1000" in body["terminal"]
 
 
