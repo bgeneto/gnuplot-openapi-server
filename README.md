@@ -4,9 +4,9 @@
 
 The architecture splits responsibilities into two containers:
 - **gnuplot-server** (FastAPI): handles all API endpoints under `/gnuplot`
-- **nginx** (Nginx): serves generated static files from `/tmp/gnuplot-tool-server` via `/outputs/{filename}`
+- **nginx** (Nginx): serves generated static files from `/tmp/images` via `/outputs/{filename}`
 
-The server wraps `py-gnuplot`, writes generated files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/gnuplot-tool-server`), and serves them back from `/outputs/{filename}` through the Nginx sidecar.
+The server wraps `py-gnuplot`, writes generated files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/images`), and serves them back from `/outputs/{filename}` through the Nginx sidecar.
 
 PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Omit `output` or use a `.png` filename to get the server's default high-resolution `pngcairo` terminal.
 
@@ -112,7 +112,7 @@ The included Docker setup runs:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GNUPLOT_OUTPUT_DIR` | `/tmp/gnuplot-tool-server` | Directory where generated outputs and temporary inline data/scripts are written. |
+| `GNUPLOT_OUTPUT_DIR` | `/tmp/images` | Directory where generated outputs and temporary inline data/scripts are written. |
 | `GNUPLOT_ALLOWED_ROOTS` | empty | Additional input-file roots, separated with the OS path separator (`:` on Linux). Existing data/script files must be under the current working directory, the output directory, or one of these extra roots. |
 | `GNUPLOT_PUBLIC_OUTPUT_BASE_URL` | empty | Optional browser-facing base URL for generated images. When set, `output.url` uses this value instead of the private Docker-network URL. |
 
@@ -165,7 +165,7 @@ or something like:
     }
 ```
 
-Then a generated file such as `/tmp/gnuplot-tool-server/trig.png` is returned to the LLM as:
+Then a generated file such as `/tmp/images/trig.png` is returned to the LLM as:
 
 ```text
 https://your-public-host.example/plot-outputs/trig.png
@@ -376,7 +376,7 @@ Successful plotting responses include:
   "success": true,
   "operation": "plot_function",
   "output": {
-    "path": "/tmp/gnuplot-tool-server/trig.png",
+    "path": "/tmp/images/trig.png",
     "filename": "trig.png",
     "url": "http://localhost:8080/outputs/trig.png",
     "mime_type": "image/png",
@@ -384,7 +384,7 @@ Successful plotting responses include:
   },
   "result": {
     "text_output": "Created plot_function output at http://localhost:8080/outputs/trig.png",
-    "output_path": "/tmp/gnuplot-tool-server/trig.png",
+    "output_path": "/tmp/images/trig.png",
     "output_url": "http://localhost:8080/outputs/trig.png"
   }
 }
@@ -428,10 +428,10 @@ Browser                          gnuplot-server              nginx
     |<-- image/png ------------------|------------------------>|
 ```
 
-- **gnuplot-server** (FastAPI on port 8000): handles all API endpoints under `/gnuplot`. Generates files into the shared `/tmp/gnuplot-tool-server` directory.
-- **nginx** (Nginx on port 80): serves static files from the shared `/tmp/gnuplot-tool-server` directory at `/outputs/{filename}`.
+- **gnuplot-server** (FastAPI on port 8000): handles all API endpoints under `/gnuplot`. Generates files into the shared `/tmp/images` directory.
+- **nginx** (Nginx on port 80): serves static files from the shared `/tmp/images` directory at `/outputs/{filename}`.
 
-Both containers share the same volume (`/tmp/plots` on the host, mounted as `/tmp/gnuplot-tool-server` inside containers).
+Both containers share the same volume (`/tmp/images` on the host, mounted as `/tmp/images` inside containers).
 
 ## Testing
 

@@ -41,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger("gnuplot-tool")
 
 DEFAULT_OUTPUT_DIR = Path(
-    os.getenv("GNUPLOT_OUTPUT_DIR", "/tmp/gnuplot-tool-server")
+    os.getenv("GNUPLOT_OUTPUT_DIR", "/tmp/images")
 ).resolve()
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PUBLIC_BASE_URL_ENV = "GNUPLOT_PUBLIC_OUTPUT_BASE_URL"
@@ -96,7 +96,7 @@ class OutputInfo(BaseModel):
     path: str = Field(
         ...,
         description="Absolute server-side path to the generated output file.",
-        examples=["/tmp/gnuplot-tool-server/trig.png"],
+        examples=["/tmp/images/trig.png"],
     )
     filename: str = Field(
         ...,
@@ -144,7 +144,7 @@ class OperationResult(BaseModel):
     output_path: str = Field(
         ...,
         description="Absolute server-side output path.",
-        examples=["/tmp/gnuplot-tool-server/trig.png"],
+        examples=["/tmp/images/trig.png"],
     )
     output_url: Optional[str] = Field(
         None,
@@ -171,7 +171,7 @@ class GnuplotSuccessResponse(BaseModel):
                     "terminal": DEFAULT_PNG_TERMINAL,
                     "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
                     "output": {
-                        "path": "/tmp/gnuplot-tool-server/trig.png",
+                        "path": "/tmp/images/trig.png",
                         "filename": "trig.png",
                         "url": "http://localhost:8000/outputs/trig.png",
                         "mime_type": "image/png",
@@ -182,7 +182,7 @@ class GnuplotSuccessResponse(BaseModel):
                             "Created plot_function output at "
                             "http://localhost:8000/outputs/trig.png"
                         ),
-                        "output_path": "/tmp/gnuplot-tool-server/trig.png",
+                        "output_path": "/tmp/images/trig.png",
                         "output_url": "http://localhost:8000/outputs/trig.png",
                     },
                 }
@@ -1666,7 +1666,7 @@ async def gnuplot_health():
                         "operation": "plot_function",
                         "terminal": DEFAULT_PNG_TERMINAL,
                         "output": {
-                            "path": "/tmp/gnuplot-tool-server/simple.png",
+                            "path": "/tmp/images/simple.png",
                             "filename": "simple.png",
                             "url": "http://localhost:8000/outputs/simple.png",
                             "mime_type": "image/png",
@@ -1677,7 +1677,7 @@ async def gnuplot_health():
                                 "Created plot_function output at "
                                 "http://localhost:8000/outputs/simple.png"
                             ),
-                            "output_path": "/tmp/gnuplot-tool-server/simple.png",
+                            "output_path": "/tmp/images/simple.png",
                             "output_url": "http://localhost:8000/outputs/simple.png",
                         },
                     }
