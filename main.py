@@ -2471,8 +2471,98 @@ def _inline_schema_refs(schema: Any, components: dict[str, Any]) -> Any:
     }
 
 
-def _inline_request_body_refs(openapi_schema: dict[str, Any]) -> None:
-    """Make request schemas friendly to tool converters that drop components."""
+def _short_description(text: str, limit: int = 180) -> str:
+    """Keep schema descriptions compact for small-model tool callers."""
+    clean = " ".join(text.split())
+    if len(clean) <= limit:
+        return clean
+
+    cutoff = clean.rfind(". ", 0, limit)
+    if cutoff >= 60:
+        return clean[: cutoff + 1]
+    return clean[:limit].rstrip() + "..."
+
+
+def _select_schema_variant(options: list[dict[str, Any]]) -> dict[str, Any]:
+    """Choose one simple schema from a union for tool-facing OpenAPI."""
+    non_null = [item for item in options if item.get("type") != "null"]
+    if not non_null:
+        return {}
+    if len(non_null) == 1:
+        return non_null[0]
+
+    preferred_types = ("object", "array", "string", "number", "integer", "boolean")
+    for preferred_type in preferred_types:
+        for option in non_null:
+            if option.get("type") == preferred_type:
+                return option
+    return non_null[0]
+
+
+def _compact_tool_schema(schema: Any) -> Any:
+    """Reduce request-body JSON Schema complexity for small LLM tool calls."""
+    if isinstance(schema, list):
+        return [_compact_tool_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    if "anyOf" in schema:
+        siblings = {key: value for key, value in schema.items() if key != "anyOf"}
+        options = [_compact_tool_schema(item) for item in schema["anyOf"]]
+        selected = deepcopy(_select_schema_variant(options))
+        selected.update(siblings)
+        return _compact_tool_schema(selected)
+
+    compact: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in {
+            "title",
+            "examples",
+            "example",
+            "default",
+            "maximum",
+            "minimum",
+            "maxLength",
+            "minLength",
+            "maxItems",
+            "minItems",
+        }:
+            continue
+        if key == "required" and value == []:
+            continue
+        if key == "description" and isinstance(value, str):
+            compact[key] = _short_description(value)
+            continue
+        if (
+            key == "additionalProperties"
+            and isinstance(value, dict)
+            and "anyOf" in value
+        ):
+            compact[key] = True
+            continue
+        compact[key] = _compact_tool_schema(value)
+
+    return compact
+
+
+def _compact_request_examples(content: dict[str, Any]) -> None:
+    """Keep one short example per operation to reduce tool prompt size."""
+    examples = content.get("examples")
+    if not isinstance(examples, dict) or not examples:
+        return
+
+    first_key = next(iter(examples))
+    first = examples[first_key]
+    content["examples"] = {
+        first_key: {
+            "summary": first.get("summary", first_key),
+            "value": first.get("value", {}),
+        }
+    }
+
+
+def _prepare_request_body_schemas(openapi_schema: dict[str, Any]) -> None:
+    """Make request schemas friendly to strict and small-model tool converters."""
     components = openapi_schema.get("components", {}).get("schemas", {})
     for path_item in openapi_schema.get("paths", {}).values():
         for operation in path_item.values():
@@ -2485,7 +2575,9 @@ def _inline_request_body_refs(openapi_schema: dict[str, Any]) -> None:
             )
             if not content or "schema" not in content:
                 continue
-            content["schema"] = _inline_schema_refs(content["schema"], components)
+            inlined = _inline_schema_refs(content["schema"], components)
+            content["schema"] = _compact_tool_schema(inlined)
+            _compact_request_examples(content)
 
 
 def custom_openapi() -> dict[str, Any]:
@@ -2499,7 +2591,7 @@ def custom_openapi() -> dict[str, Any]:
         description=app.description,
         routes=app.routes,
     )
-    _inline_request_body_refs(openapi_schema)
+    _prepare_request_body_schemas(openapi_schema)
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 

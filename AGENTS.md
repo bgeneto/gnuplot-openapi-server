@@ -185,7 +185,7 @@ Path safety is also part of the security model:
 
 The FastAPI app mounts `/outputs` at import time using `DEFAULT_OUTPUT_DIR`. Tests monkeypatch `DEFAULT_OUTPUT_DIR` and use direct response metadata checks; be careful if changing app mounting behavior.
 
-The custom OpenAPI generator inlines `$ref` values inside request body schemas while preserving component refs elsewhere. This is deliberate: some OpenAI-compatible tool converters, including LiteLLM paths used by small models, dereference endpoint parameter schemas without carrying the top-level `components` object.
+The custom OpenAPI generator inlines and compacts request body schemas while preserving component refs elsewhere. It deliberately removes nested `$ref`, nullable `anyOf` unions, verbose validation-only constraints, and extra examples from request schemas because some OpenAI-compatible tool converters, including LiteLLM paths used by small models, either lose the top-level `components` object or struggle with large/branchy tool schemas. Keep runtime Pydantic validation rich; keep published tool schemas compact.
 
 Pydantic v2 is required. `requirements.txt` pins lower bounds for FastAPI and Pydantic because `main.py` uses `field_validator`, `ConfigDict`, and `AliasChoices`.
 

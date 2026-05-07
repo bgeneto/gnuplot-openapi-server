@@ -144,6 +144,16 @@ def schema_contains_ref(schema):
     return False
 
 
+def schema_contains_key(schema, key):
+    if isinstance(schema, dict):
+        return key in schema or any(
+            schema_contains_key(value, key) for value in schema.values()
+        )
+    if isinstance(schema, list):
+        return any(schema_contains_key(item, key) for item in schema)
+    return False
+
+
 @pytest.mark.asyncio
 async def test_health_and_openapi_schema_expose_gnuplot_tools():
     transport = ASGITransport(app=app)
@@ -198,16 +208,22 @@ async def test_health_and_openapi_schema_expose_gnuplot_tools():
         "/gnuplot/plot_data",
         "/gnuplot/splot_data",
         "/gnuplot/multiplot",
+        "/gnuplot/run_script",
+        "/gnuplot/run_commands",
     ):
         examples = paths[path]["post"]["requestBody"]["content"][
             "application/json"
         ]["examples"]
+        assert len(examples) == 1
         for example in examples.values():
             assert "output" not in example["value"]
+            assert "description" not in example
         request_schema = paths[path]["post"]["requestBody"]["content"][
             "application/json"
         ]["schema"]
         assert not schema_contains_ref(request_schema)
+        assert not schema_contains_key(request_schema, "anyOf")
+        assert not schema_contains_key(request_schema, "examples")
 
     components = schema["components"]["schemas"]
     assert "OutputInfo" in components
