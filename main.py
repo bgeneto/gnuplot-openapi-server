@@ -56,7 +56,9 @@ OUTPUT_PUBLIC_BASE_URL_ENV = "GNUPLOT_PUBLIC_OUTPUT_BASE_URL"
 DEFAULT_IMAGE_WIDTH = 1600
 DEFAULT_IMAGE_HEIGHT = 1000
 DEFAULT_PNG_FONT = "DejaVu Sans"
-DEFAULT_PNG_FONT_SIZE = 16
+DEFAULT_PNG_FONT_SIZE = 18
+DEFAULT_2D_FUNCTION_SAMPLES = 3000
+DEFAULT_GRID_STYLE = 'back lc rgb "#b8c2cc" lw 1'
 MAX_UPLOADED_DATA_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOADED_DATA_FILE_BASE64_CHARS = 7 * 1024 * 1024
 ALLOWED_UPLOADED_DATA_SUFFIXES = {
@@ -331,7 +333,11 @@ class GnuplotBaseInput(BaseModel):
         description=(
             "Optional gnuplot set options. Example: "
             "{'title': '\"Simple Plots\"', 'xrange': '[-10:10]', 'grid': ''}. "
-            "Use quoted strings inside values when gnuplot expects a string."
+            "Use quoted strings inside values when gnuplot expects a string. "
+            "For 2D function plots and 2D multiplot panels, the server defaults "
+            "to samples=3000 unless you set samples explicitly. If you send "
+            "grid as an empty string, the server applies a more visible default "
+            "grid style."
         ),
         examples=[{"title": '"Simple Plots"', "xrange": "[-10:10]", "grid": ""}],
     )
@@ -1065,9 +1071,16 @@ class GnuplotTool:
         width: int,
         height: int,
         include_output_settings: bool = True,
+        default_samples: Optional[int] = None,
     ) -> dict[str, GnuplotOptionValue]:
         """Build py-gnuplot settings with terminal/output defaults."""
         normalized: dict[str, GnuplotOptionValue] = dict(settings or {})
+
+        if default_samples is not None and "samples" not in normalized:
+            normalized["samples"] = default_samples
+
+        if normalized.get("grid") == "":
+            normalized["grid"] = DEFAULT_GRID_STYLE
 
         if include_output_settings and output_path is not None:
             has_terminal = "terminal" in normalized or "term" in normalized
@@ -1412,6 +1425,9 @@ class GnuplotTool:
                 data.terminal,
                 data.width,
                 data.height,
+                default_samples=(
+                    DEFAULT_2D_FUNCTION_SAMPLES if plot_kind == "plot" else None
+                ),
             )
             items = self._validate_items(data.items, data.allow_unsafe_commands)
             post_commands = self._validate_commands(
@@ -1605,6 +1621,11 @@ class GnuplotTool:
                 data.terminal,
                 data.width,
                 data.height,
+                default_samples=(
+                    DEFAULT_2D_FUNCTION_SAMPLES
+                    if any(panel.kind == "plot" for panel in data.panels)
+                    else None
+                ),
             )
             post_commands = self._validate_commands(
                 data.post_commands, data.allow_unsafe_commands
@@ -1847,7 +1868,9 @@ async def gnuplot_health():
     description=(
         "Use this endpoint when the user asks to plot 2D mathematical functions or "
         "expressions such as sin(x), polynomials, exponentials, or comparisons across "
-        "one x-axis. Prefer PNG output for Open WebUI; omit output or choose a .png filename."
+        "one x-axis. Prefer PNG output for Open WebUI; omit output or choose a .png "
+        "filename. When settings.samples is omitted, the server uses samples=3000 "
+        "for smoother 2D curves."
     ),
     operation_id="gnuplot_plot_function",
     responses={
@@ -2225,7 +2248,10 @@ async def gnuplot_splot_data(
     summary="Create a gnuplot multiplot image",
     description=(
         "Use this endpoint when the user asks for multiple panels in one generated "
-        "figure, such as comparing related functions above and below each other."
+        "figure, such as comparing related functions above and below each other. "
+        "Top-level settings apply before the panels render. When a 2D plot panel "
+        "does not set samples, the server defaults to samples=3000 unless the "
+        "request already provided one."
     ),
     operation_id="gnuplot_multiplot",
     responses=COMMON_ERROR_RESPONSES,

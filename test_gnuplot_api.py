@@ -36,7 +36,9 @@ class FakeGnuplot:
             self.output_dirty = False
             return
 
-        if any("plot" in command or command.startswith("load ") for command in commands):
+        if any(
+            "plot" in command or command.startswith("load ") for command in commands
+        ):
             self.output_dirty = True
 
     def plot(self, *items, **settings):
@@ -186,6 +188,7 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert Path(body["output"]["path"]).exists()
     assert FakeGnuplot.instances[-1].operations[-1][0] == "plot"
     assert FakeGnuplot.instances[-1].commands[-1] == "unset output"
+    assert FakeGnuplot.instances[-1].settings["grid"] == main.DEFAULT_GRID_STYLE
 
 
 @pytest.mark.asyncio
@@ -247,8 +250,37 @@ async def test_plot_function_defaults_to_png_for_open_webui_markdown():
     assert body["output"]["url"].endswith(".png")
     assert body["output"]["mime_type"] == "image/png"
     assert body["terminal"].startswith("pngcairo")
-    assert 'font "DejaVu Sans,16"' in body["terminal"]
+    assert 'font "DejaVu Sans,18"' in body["terminal"]
     assert "size 1600,1000" in body["terminal"]
+    assert FakeGnuplot.instances[-1].settings["samples"] == 3000
+
+
+@pytest.mark.asyncio
+async def test_plot_function_allows_explicit_samples_override():
+    response = await post_json(
+        "/gnuplot/plot_function",
+        {
+            "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+            "settings": {"samples": 1200},
+        },
+    )
+
+    assert response.status_code == 200
+    assert FakeGnuplot.instances[-1].settings["samples"] == 1200
+
+
+@pytest.mark.asyncio
+async def test_plot_function_preserves_explicit_grid_clause():
+    response = await post_json(
+        "/gnuplot/plot_function",
+        {
+            "items": ['[-10:10] sin(x) title "sin(x)" with lines'],
+            "settings": {"grid": 'back lc rgb "#808080" lw 2'},
+        },
+    )
+
+    assert response.status_code == 200
+    assert FakeGnuplot.instances[-1].settings["grid"] == 'back lc rgb "#808080" lw 2'
 
 
 @pytest.mark.asyncio
@@ -397,6 +429,26 @@ async def test_plotting_endpoints_return_success(path, payload, operation):
     assert body["success"] is True
     assert body["operation"] == operation
     assert Path(body["output"]["path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_multiplot_defaults_samples_for_2d_plot_panels():
+    response = await post_json(
+        "/gnuplot/multiplot",
+        {
+            "output": "multi-default-samples.png",
+            "layout": '1,1 title "Single Panel"',
+            "panels": [
+                {
+                    "kind": "plot",
+                    "items": ['[-10:10] sin(x) title "sin" with lines'],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert FakeGnuplot.instances[-1].settings["samples"] == 3000
 
 
 @pytest.mark.asyncio

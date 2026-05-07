@@ -11,7 +11,7 @@ The implementation lives mainly in `main.py` and wraps `py-gnuplot`, which in tu
 Critical product constraint: keep PNG output as the default. Open WebUI's markdown editor can render returned PNG URLs directly. If the caller omits `output` and `terminal`, the server should generate a unique `.png` file using `pngcairo`.
 
 Default PNGs are intentionally high-resolution for browser markdown rendering:
-`1600x1000` with `pngcairo enhanced font "DejaVu Sans,16"`. The Docker image
+`1600x1000` with `pngcairo enhanced font "DejaVu Sans,18"`. The Docker image
 installs DejaVu fonts so this font is available in headless containers.
 
 ## Repository Files
@@ -135,9 +135,13 @@ When no `output` is supplied:
 
 When `output` is supplied with a `.png` suffix and no explicit terminal:
 
-- use `pngcairo enhanced font "DejaVu Sans,16" size {width},{height}`.
+- use `pngcairo enhanced font "DejaVu Sans,18" size {width},{height}`.
 
 Only produce SVG, PDF, GIF, JPG, text, or other output types when the caller explicitly requests them through `output` extension or `terminal`.
+
+For `/gnuplot/plot_function`, default to `set samples 3000` unless the caller already supplied `settings.samples`. Apply the same default for 2D `/gnuplot/multiplot` requests through the top-level settings path when no explicit `samples` value is present. Do not apply `3000` to 3D `splot` defaults; `isosamples` is the relevant 3D control and needs a much smaller, deliberate value.
+
+When callers send `settings.grid` as an empty string, normalize it to a more visible default grid clause instead of plain `set grid`. Preserve any explicit non-empty `grid` clause exactly as provided.
 
 The tests include `test_plot_function_defaults_to_png_for_open_webui_markdown`. Update that test if and only if the product requirement changes.
 
@@ -204,7 +208,7 @@ PYTHONDONTWRITEBYTECODE=1 PYENV_VERSION=linkspix pyenv exec pytest -q -p no:cach
 Current expected result:
 
 ```text
-20 passed
+23 passed
 ```
 
 The tests mock `py-gnuplot` with `FakeGnuplot`. This is deliberate. API contract tests should not require the host machine to have native gnuplot installed. Use Docker builds, container smoke tests, or manual endpoint calls when you specifically need to verify real rendering.
