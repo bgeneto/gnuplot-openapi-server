@@ -104,6 +104,7 @@ Most successful plotting responses include:
 - `result.text_output`
 - `result.output_path`
 - `result.output_url`
+- `result.markdown`, a ready-to-return markdown image/link snippet that callers should echo to the user
 
 Endpoint aliases are intentional. Preserve them unless changing API compatibility on purpose:
 

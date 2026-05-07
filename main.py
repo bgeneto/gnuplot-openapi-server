@@ -176,6 +176,13 @@ class OperationResult(BaseModel):
         description="HTTP URL to the generated output, or null when no output was expected.",
         examples=["http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"],
     )
+    markdown: Optional[str] = Field(
+        None,
+        description="Ready-to-return markdown link or image embed for the generated output.",
+        examples=[
+            "![Generated plot](http://localhost:8000/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456)"
+        ],
+    )
 
 
 class GnuplotSuccessResponse(BaseModel):
@@ -1406,6 +1413,13 @@ class GnuplotTool:
 
         return output_info
 
+    def _markdown_for_output(self, output_info: dict[str, Any]) -> str:
+        """Return a small markdown snippet for the generated output."""
+        url = output_info["url"]
+        if str(output_info.get("mime_type", "")).startswith("image/"):
+            return f"![Generated plot]({url})"
+        return f"[Generated output]({url})"
+
     def _success_response(
         self,
         operation: str,
@@ -1418,15 +1432,20 @@ class GnuplotTool:
         output_info = self._format_output_response(
             output_path, request, include_image_base64
         )
+        markdown = self._markdown_for_output(output_info)
         return {
             "success": True,
             "operation": operation,
             **metadata,
             "output": output_info,
             "result": {
-                "text_output": f"Created {operation} output at {output_info['url']}",
+                "text_output": (
+                    f"Created {operation} output at {output_info['url']}. "
+                    f"Return this markdown: {markdown}"
+                ),
                 "output_path": output_info["path"],
                 "output_url": output_info["url"],
+                "markdown": markdown,
             },
         }
 
@@ -1883,6 +1902,9 @@ class GnuplotTool:
                     "text_output": "Executed gnuplot commands successfully",
                     "output_path": str(output_path),
                     "output_url": output_info["url"] if output_info else None,
+                    "markdown": (
+                        self._markdown_for_output(output_info) if output_info else None
+                    ),
                 },
             }
         except Exception as exc:

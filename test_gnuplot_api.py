@@ -266,6 +266,8 @@ async def test_plot_function_returns_output_metadata_and_base64():
     assert body["output"]["mime_type"] == "image/png"
     assert body["output"]["data_uri"].startswith("data:image/png;base64,")
     assert Path(body["output"]["path"]).exists()
+    assert body["result"]["markdown"] == f"![Generated plot]({body['output']['url']})"
+    assert body["result"]["markdown"] in body["result"]["text_output"]
     assert body["settings"]["grid"] == main.DEFAULT_GRID_STYLE
     assert "terminal" not in body["settings"]
     assert "output" not in body["settings"]
@@ -623,6 +625,7 @@ async def test_run_commands_can_skip_output_requirement():
     assert body["success"] is True
     assert body["output"] is None
     assert body["result"]["output_url"] is None
+    assert body["result"]["markdown"] is None
 
 
 @pytest.mark.asyncio

@@ -463,9 +463,10 @@ Successful plotting responses include:
     "size_bytes": 12345
   },
   "result": {
-    "text_output": "Created plot_function output at http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
+    "text_output": "Created plot_function output at http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456. Return this markdown: ![Generated plot](http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456)",
     "output_path": "/tmp/images/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png",
-    "output_url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456"
+    "output_url": "http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456",
+    "markdown": "![Generated plot](http://localhost:8080/outputs/gnuplot-1f2e3d4c5b6a7980abcd1234567890ef.png?v=123-456)"
   }
 }
 ```
