@@ -1,8 +1,0 @@
-FROM nginx:alpine
-
-# Override the main nginx.conf (not conf.d/) so worker_processes is allowed
-COPY nginx.conf /etc/nginx/nginx.conf
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
