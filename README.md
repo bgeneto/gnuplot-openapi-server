@@ -2,7 +2,11 @@
 
 `gnuplot-server` is a FastAPI/OpenAPI tool server for Open WebUI-style tool calling. It is not a native MCP server, but it exposes schema-driven plotting endpoints that let an LLM create gnuplot charts through ordinary HTTP calls.
 
-The server wraps `py-gnuplot`, writes generated files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/gnuplot-tool-server`), and serves them back from `/outputs/{filename}`.
+The architecture splits responsibilities into two containers:
+- **gnuplot-server** (FastAPI): handles all API endpoints under `/gnuplot`
+- **nginx** (Nginx): serves generated static files from `/tmp/gnuplot-tool-server` via `/outputs/{filename}`
+
+The server wraps `py-gnuplot`, writes generated files under `GNUPLOT_OUTPUT_DIR` (default: `/tmp/gnuplot-tool-server`), and serves them back from `/outputs/{filename}` through the Nginx sidecar.
 
 PNG is the recommended output format for Open WebUI because its markdown editor can render generated plot URLs reliably with normal image syntax. Omit `output` or use a `.png` filename to get the server's default high-resolution `pngcairo` terminal.
 
@@ -16,29 +20,31 @@ PNG is the recommended output format for Open WebUI because its markdown editor 
 - Multi-panel gnuplot images with `/gnuplot/multiplot`
 - Inline or file-based `.gnu`/`.gp` script execution
 - Raw gnuplot command execution for trusted workflows
-- Static access to generated output files through `/outputs`
+- Static access to generated output files through the Nginx sidecar at `/outputs`
 - A health endpoint that reports Python package and `gnuplot` executable availability
 - PNG-by-default output for Open WebUI markdown rendering
 
 ## Runtime Layout
 
-- Service/container name: `gnuplot-server`
-- Default internal port: `8000`
-- Local docs: `http://localhost:8000/docs`
-- Local OpenAPI schema: `http://localhost:8000/openapi.json`
-- Health check: `http://localhost:8000/gnuplot/health`
-- Generated outputs: `http://localhost:8000/outputs/{filename}`
+| Service | Container | Port | Purpose |
+| --- | --- | --- | --- |
+| `gnuplot-server` | FastAPI | `8000` | API endpoints (`/gnuplot/*`) |
+| `nginx` | Nginx | `80` | Static file serving (`/outputs/*`) |
 
-If Open WebUI is running on the same Docker network, it should usually reach this server at:
+**Local access (dev):**
+- API: `http://localhost:8000`
+- Outputs: `http://localhost:8080/outputs/{filename}`
+- Docs: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/gnuplot/health`
+
+**Docker network access:**
+- API (Open WebUI backend): `http://gnuplot-server:8000`
+- Outputs (browser): `http://gnuplot-nginx:80/outputs/{filename}`
+
+If Open WebUI is running on the same Docker network, it should reach the API at:
 
 ```text
 http://gnuplot-server:8000
-```
-
-If you are accessing it from the host machine through the published port, use:
-
-```text
-http://localhost:8000
 ```
 
 ## Requirements
@@ -83,10 +89,10 @@ Run with Docker Compose for local host access:
 docker compose -f compose.dev.yaml up --build -d
 ```
 
-The dev compose file defaults generated image URLs to:
+The dev compose file defaults generated image URLs to the Nginx sidecar:
 
 ```text
-http://localhost:8000/outputs
+http://localhost:8080/outputs
 ```
 
 Run with the Open WebUI Docker network setup:
@@ -98,11 +104,9 @@ docker compose -f compose.prod.yaml up --build -d
 
 The prod compose file requires `GNUPLOT_PUBLIC_OUTPUT_BASE_URL`, because the browser cannot render Docker-internal URLs such as `http://gnuplot-server:8000/outputs/...`.
 
-The included Docker setup runs the FastAPI app as:
-
-```bash
-uvicorn main:app --host=0.0.0.0 --port=8000
-```
+The included Docker setup runs:
+- **FastAPI** via `uvicorn main:app --host=0.0.0.0 --port=8000`
+- **Nginx** via `nginx -g 'daemon off;'` serving static files on port 80
 
 ## Configuration
 
@@ -122,20 +126,20 @@ Open WebUI calls this tool server from the backend using the private Docker-netw
 http://gnuplot-server:8000
 ```
 
-That URL is not usually reachable from the user's browser. To render generated PNGs in Open WebUI markdown, expose only the static output path through your reverse proxy and set:
+That URL is not usually reachable from the user's browser. The Nginx sidecar serves static files on the Docker network at `http://gnuplot-nginx:80/outputs/{filename}`. To render generated PNGs in Open WebUI markdown, expose the static output path through your reverse proxy and set:
 
 ```yaml
 environment:
   - GNUPLOT_PUBLIC_OUTPUT_BASE_URL=https://your-public-host.example/plot-outputs
 ```
 
-With Caddy on the same Docker network as `gnuplot-server`, expose only generated files like this:
+With Caddy on the same Docker network as `gnuplot-server` and `nginx`, expose only generated files like this:
 
 ```caddyfile
 your-public-host.example {
     handle_path /plot-outputs/* {
         rewrite * /outputs{path}
-        reverse_proxy http://gnuplot-server:8000
+        reverse_proxy http://gnuplot-nginx:80
     }
 
     # Keep the tool API private. Add your normal Open WebUI routes elsewhere.
@@ -152,7 +156,7 @@ or something like:
     handle @images-server {
         handle_path /plot-outputs/* {
             rewrite * /outputs{path}
-            reverse_proxy http://gnuplot-server:8000 {
+            reverse_proxy http://gnuplot-nginx:80 {
                 import headers-proxy
                 import transport-settings
             }
@@ -374,14 +378,14 @@ Successful plotting responses include:
   "output": {
     "path": "/tmp/gnuplot-tool-server/trig.png",
     "filename": "trig.png",
-    "url": "http://localhost:8000/outputs/trig.png",
+    "url": "http://localhost:8080/outputs/trig.png",
     "mime_type": "image/png",
     "size_bytes": 12345
   },
   "result": {
-    "text_output": "Created plot_function output at http://localhost:8000/outputs/trig.png",
+    "text_output": "Created plot_function output at http://localhost:8080/outputs/trig.png",
     "output_path": "/tmp/gnuplot-tool-server/trig.png",
-    "output_url": "http://localhost:8000/outputs/trig.png"
+    "output_url": "http://localhost:8080/outputs/trig.png"
   }
 }
 ```
@@ -404,11 +408,30 @@ Recommended URLs:
 - If Open WebUI is running in Docker on the same network, such as the `chatwebui` network: `http://gnuplot-server:8000`
 - If Open WebUI is running on the host: `http://localhost:8000`
 
-For plots you want shown directly in markdown, use the PNG URL returned in `output.url`:
+For plots you want shown directly in markdown, use the PNG URL returned in `output.url`. In the Docker setup, this points to the Nginx sidecar:
 
 ```markdown
-![Generated plot](http://gnuplot-server:8000/outputs/trig.png)
+![Generated plot](http://gnuplot-nginx:80/outputs/trig.png)
 ```
+
+## Architecture
+
+```
+Browser                          gnuplot-server              nginx
+    |                                |                         |
+    |--- POST /gnuplot/* ---------->|                         |
+    |   (API calls)                  |                         |
+    |<-- JSON response -------------|                         |
+    |                                |                         |
+    |--- GET /outputs/* -------------------------------------->|
+    |   (static files)               |                         |
+    |<-- image/png ------------------|------------------------>|
+```
+
+- **gnuplot-server** (FastAPI on port 8000): handles all API endpoints under `/gnuplot`. Generates files into the shared `/tmp/gnuplot-tool-server` directory.
+- **nginx** (Nginx on port 80): serves static files from the shared `/tmp/gnuplot-tool-server` directory at `/outputs/{filename}`.
+
+Both containers share the same volume (`/tmp/plots` on the host, mounted as `/tmp/gnuplot-tool-server` inside containers).
 
 ## Testing
 

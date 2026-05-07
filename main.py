@@ -32,7 +32,6 @@ from urllib.parse import quote
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 # Configure logging
@@ -83,7 +82,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/outputs", StaticFiles(directory=str(DEFAULT_OUTPUT_DIR)), name="outputs")
 
 GnuplotScalar = str | int | float | bool | None
 GnuplotOptionValue = GnuplotScalar | list[str]
@@ -1130,7 +1128,14 @@ class GnuplotTool:
         if public_base_url:
             encoded_path = quote(relative_path, safe="/")
             return f"{public_base_url.rstrip('/')}/{encoded_path}"
-        return str(request.url_for("outputs", path=relative_path))
+        # Fallback: construct URL from request scheme/host when no StaticFiles mount exists.
+        # This handles the Nginx sidecar case where the browser needs a public URL.
+        try:
+            return str(request.url_for("outputs", path=relative_path))
+        except Exception:
+            # No "outputs" route exists (StaticFiles was removed for Nginx sidecar).
+            # Return a placeholder that the caller should replace with the Nginx URL.
+            return f"{request.base_url}outputs/{relative_path}"
 
     def _format_output_response(
         self,

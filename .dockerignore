@@ -28,7 +28,11 @@
 **/charts
 **/docker-compose*
 **/compose.y*ml
-**/Dockerfile*
+**/Dockerfile
+**/Dockerfile.*
+# But keep Dockerfile.nginx for the nginx build context
+!Dockerfile.nginx
+!nginx.conf
 **/node_modules
 **/npm-debug.log
 **/obj
