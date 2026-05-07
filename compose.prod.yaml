@@ -17,6 +17,7 @@ services:
       - TZ=America/Sao_Paulo
       - GNUPLOT_OUTPUT_DIR=/tmp/images
       - GNUPLOT_PUBLIC_OUTPUT_BASE_URL=${GNUPLOT_PUBLIC_OUTPUT_BASE_URL:-https://your-public-host.example}
+    user: "${UID}:${GID}"
     networks:
       - chatwebui
 
